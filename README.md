@@ -65,5 +65,6 @@ she's settled.
 
 ---
 
-*She started as a typo. She has been gainfully employed ever since.*
+*Her first name is a mishearing. Her surname is a typo. She has been gainfully employed ever since.*
+
 
