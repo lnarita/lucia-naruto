@@ -236,7 +236,6 @@
 </div>
 
 <div class="actions">
-  <button id="vcf">Save contact</button>
   <a id="sheet" target="_blank" rel="noopener">Emotion pack &rarr;</a>
 </div>
 <p class="hint">tap her &mdash; she greets. tap her too much &mdash; she has opinions.</p>
@@ -367,26 +366,6 @@ if (CONFIG.sheetUrl && !CONFIG.sheetUrl.startsWith("{{")) {
 } else {
   sheetA.style.display = "none";
 }
-
-// ---- vCard ----
-document.getElementById("vcf").onclick = () => {
-  // the vCard carries the human, not the character
-  const n = !unset(CONFIG.nameB) ? CONFIG.nameB
-          : !unset(CONFIG.nameA) ? CONFIG.nameA : "Lucia Naruto";
-  const lines = ["BEGIN:VCARD", "VERSION:3.0", "FN:" + n];
-  if (CONFIG.title && !CONFIG.title.startsWith("{{")) lines.push("TITLE:" + CONFIG.title);
-  if (CONFIG.email) lines.push("EMAIL:" + CONFIG.email);
-  for (const l of CONFIG.links) {
-    if (l.url && !l.url.startsWith("{{")) lines.push("URL:" + l.url);
-  }
-  lines.push("END:VCARD");
-  const blob = new Blob([lines.join("\r\n")], {type: "text/vcard"});
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = n.replace(/\s+/g, "_") + ".vcf";
-  a.click();
-  URL.revokeObjectURL(a.href);
-};
 
 // ---- rig setup ----
 const S = {};
