@@ -191,12 +191,18 @@ const ZZZ = ['path41-1','path41','path41-4'];   // small -> large
   document.getElementById('g25').style.opacity = 0;
   for (const z of ZZZ) document.getElementById(z).style.opacity = 0;
   const g11 = document.getElementById('g11');
+  // front layer: the eyes ride here and get extra parallax on head turns,
+  // so the face reads convex instead of flat (whiskers g2 get the same
+  // transform in place, to keep the author's z-order)
+  const fg = document.createElementNS('http://www.w3.org/2000/svg','g');
+  fg.id = 'gFront';
+  g11.appendChild(fg);
   for (const nm of ['morphL','morphR']) {
     const p = document.createElementNS('http://www.w3.org/2000/svg','path');
     p.id = nm;
     p.setAttribute('style',
       'fill:none;stroke:#17191c;stroke-width:1.97793;stroke-linecap:round;stroke-linejoin:round');
-    g11.appendChild(p);
+    fg.appendChild(p);
   }
 })();
 
@@ -208,6 +214,12 @@ function render(dx, dy, eyeO, surp, angles) {
   const sx = 1 - 0.004*Math.abs(dx), fxc = 86.6*(1-sx);
   document.getElementById('g11').setAttribute('transform',
     `translate(${(0.55*dx+fxc).toFixed(3)} 0)scale(${sx.toFixed(4)} 1)`);
+  // convexity: front features (eyes + whiskers) travel farther than the
+  // face oval and compress a touch more — three depth layers total
+  const s2 = 1 - 0.0025*Math.abs(dx);
+  const ftr = `translate(${(0.30*dx + 86.6*(1-s2)).toFixed(3)} 0)scale(${s2.toFixed(4)} 1)`;
+  document.getElementById('gFront').setAttribute('transform', ftr);
+  document.getElementById('g2').setAttribute('transform', ftr);
   for (const [side, pid] of [['L','morphL'],['R','morphR']]) {
     const A = S.g7[side], B = S.g6[side], C = S.g8[side];
     const pts = A.map((p,k)=>{
