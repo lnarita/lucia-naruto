@@ -1,0 +1,475 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lucia Vibe Mode</title>
+<style>
+  :root { --sand:#e0cda8; --ink:#17191c; --paper:#f4ead2; --verm:#c9483a; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; background: var(--paper); color: var(--ink);
+    font-family: Georgia, "Iowan Old Style", serif;
+    display: flex; flex-direction: column; align-items: center;
+    justify-content: center; gap: 14px; padding: 24px 14px;
+  }
+  .card {
+    background: var(--sand); border: 2px solid var(--ink); border-radius: 18px;
+    padding: 18px 22px 14px; width: min(480px, 94vw);
+    box-shadow: 6px 6px 0 rgba(23,25,28,.18); text-align: center;
+  }
+  .stage svg { width: min(320px, 78vw); height: auto; }
+  .status { font-size: .8rem; min-height: 1.2em; opacity: .75; font-style: italic; }
+  .row { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin-top: 10px; }
+  button {
+    font-family: inherit; font-size: .8rem; padding: 8px 14px;
+    border: 1.5px solid var(--ink); border-radius: 10px;
+    background: var(--paper); color: var(--ink); cursor: pointer;
+  }
+  button:hover { transform: translateY(-1px); }
+  button.on { background: var(--ink); color: var(--sand); }
+  audio { width: 100%; height: 30px; margin-top: 10px; display: none; }
+  .hint { font-size: .68rem; opacity: .5; margin: 2px 0 0; font-style: italic; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="stage"><svg xmlns="http://www.w3.org/2000/svg" id="svg1" width="393.643" height="402.069" version="1.1" viewBox="0 0 104.151 106.381">
+  <g id="layer1" transform="translate(-32.226 -47.927)">
+    <g id="g23" transform="translate(11.449 6.862)scale(.87579)">
+      <g id="g39" style="display:inline" transform="translate(-11.848 -15.26)scale(1.14243)">
+        <path id="path37" d="M32.976 120.852c-5.644-4.34 2.799-14.991 10.542-17.76 7.744-2.767 13.234-10.635 21.102-11.644s20.382 1.818 26.81-4.142c6.43-5.96 11.442-12.253 21.243-10.137 9.8 2.117 13.593 12.443 17.862 19.717 4.27 7.274 8.703 19.922-1.698 22.758s-14.507 17.364-22.34 13.21c-7.833-4.153-15.487-3.593-25.798 1.248s-33.392 4.629-39.877-1.154c-6.484-5.784-2.201-7.755-7.846-12.096" style="fill:#c8b7b7;fill-opacity:1;stroke:none;stroke-width:.302108px;stroke-linecap:butt;stroke-linejoin:miter;stroke-opacity:1"/>
+      </g>
+      <g id="g36" style="display:inline" transform="translate(-28.65 -34.626)scale(1.33104)">
+        <path id="path34" d="M46.063 120.283c-3.544-8.515 10.338-7.857 13.952-13.848 3.613-5.99 12.235-11.826 20.62-14.524 8.384-2.697 18.437 3.411 27.052-.652 8.002-1.602 17.837 2.717 18.4 11.642.561 8.925-10.45-.727-16.165 2.427-5.975 4.419-15.83 8.136-25.125 8.256s-17.102 15.651-24.586 13.42c-7.483-2.232-10.603 1.795-14.148-6.72" style="fill:#faa;fill-opacity:1;stroke:none;stroke-width:.302108px;stroke-linecap:butt;stroke-linejoin:miter;stroke-opacity:1"/>
+      </g>
+      <g id="g11" style="display:inline">
+        <g id="g42" style="display:inline">
+          <path id="path15" d="M66.591 119.39c-3.168 8.761-1.069 21.913-5.8 24.808 3.876.053 11.91-6.064 10.61-8.955-3.9-8.686-3.673-8.838-4.81-15.853" style="fill:#17191c;fill-opacity:1;stroke:none;stroke-width:2.76875;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-dashoffset:0"/>
+          <path id="path16" d="M108.183 119.012c-3.068 5.807-10.043 20.803 2.975 27.073-1.91-3.58-3.408-10.278-2.975-27.074" style="fill:#17191c;fill-opacity:1;stroke:none;stroke-width:3.16469;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-dashoffset:0"/>
+          <path id="path17" d="M66.214 116.09S60.748 134 53.919 133.216c6.717 2.687 14.27-3.728 14.128-5.6-.084-1.097-1.593-7.84-1.833-11.526" style="fill:#17191c;fill-opacity:1;stroke:none;stroke-width:2.76875;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-dashoffset:0"/>
+          <path id="path18" d="M108.102 118.544c-1.416 3.15-5.963 18.24 6.829 16.86-5.468-3.352-4.835-9.829-6.83-16.86" style="fill:#17191c;fill-opacity:1;stroke:none;stroke-width:3.16469;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-dashoffset:0"/>
+        </g>
+        <path id="path42" d="M110.169 109.803c-.196-12.866-10.392-23.884-23.466-23.884-13.073 0-23.27 11.018-23.465 23.884-.193 12.661 5.658 38.65 23.465 38.65 17.808 0 23.659-25.989 23.466-38.65" style="display:inline;fill:#e0cda8;fill-opacity:1;stroke:none;stroke-width:3.16469;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1"/>
+        <g id="g2">
+          <path id="path2" d="M66.485 129.031c.006.012 2.92-3.985 7.337-4.545" style="fill:none;stroke:#17191c;stroke-width:1.97793;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"/>
+          <path id="path2-4" d="M67.995 133.007c-.012.004 2.213-2.995 6.368-4.075" style="fill:none;stroke:#17191c;stroke-width:1.97793;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"/>
+          <path id="path2-4-5" d="M70.146 136.93c.003-.004 2.077-2.66 5.053-3.63" style="fill:none;stroke:#17191c;stroke-width:1.97793;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"/>
+          <path id="path2-6" d="M106.812 129.1c-.006.012-2.92-3.985-7.337-4.545" style="display:inline;fill:none;stroke:#17191c;stroke-width:1.97764;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"/>
+          <path id="path2-4-59" d="M105.301 133.076c.013.004-2.212-2.995-6.367-4.075" style="display:inline;fill:none;stroke:#17191c;stroke-width:1.97793;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"/>
+          <path id="path2-4-5-5" d="M103.15 137c-.003-.005-2.077-2.66-5.052-3.632" style="display:inline;fill:none;stroke:#17191c;stroke-width:1.97793;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"/>
+        </g>
+        <path id="path5" d="M110.169 109.803c-.196-12.866-10.392-23.884-23.466-23.884-13.073 0-23.27 11.018-23.465 23.884-.193 12.661 5.658 38.65 23.465 38.65 17.808 0 23.659-25.989 23.466-38.65" style="fill:none;stroke:#17191c;stroke-width:3.16469;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1"/>
+        <g id="g3" style="display:inline">
+          <path id="path3-0" d="M64.303 114.925c4.724-5.664 13.915-8.484 22.4-8.254 8.486-.23 17.676 2.59 22.4 8.254" style="fill:none;stroke:#17191c;stroke-width:3.16469;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1"/>
+          <path id="path4" d="M76.896 96.338s-2.794.972-2.647 3.46c.146 2.488.308 4.928.308 4.928.407 2.343 2.53 2.997 4.349 2.602" style="fill:none;stroke:#17191c;stroke-width:3.16469;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1"/>
+          <path id="path9" d="M109.104 103.493c-4.73-5.67-13.934-8.49-22.4-8.254-8.468-.236-17.672 2.584-22.401 8.254" style="fill:none;stroke:#17191c;stroke-width:3.16469;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1"/>
+          <path id="path11" d="M96.51 96.338s2.794.972 2.648 3.46-.308 4.928-.308 4.928c-.408 2.343-2.53 2.997-4.349 2.602" style="fill:none;stroke:#17191c;stroke-width:3.16469;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1"/>
+          <g id="g22" style="display:inline" transform="translate(10.767 14.87)scale(.79117)">
+            <path id="path20" d="M93.424 107.293c.283.075.038.42-.125.472-.443.14-.799-.325-.818-.722-.035-.708.659-1.197 1.317-1.165.966.048 1.605.997 1.512 1.914-.124 1.223-1.335 2.015-2.51 1.859-1.48-.197-2.427-1.674-2.206-3.107.268-1.735 2.013-2.839 3.703-2.552a3.46 3.46 0 0 1 2.163 1.314l1.874-1.398" style="fill:none;fill-rule:evenodd;stroke:#17191c;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1" transform="translate(2.22 2.108)"/>
+            <path id="path21" d="m92.945 108.149-1.29 3.658h3.79" style="fill:none;stroke:#17191c;stroke-width:1;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"/>
+          </g>
+        </g>
+        <g id="g7" style="display:inline">
+          <path id="path19" d="M71.476 115.386c1.794 2.538 4.61 3.984 9.439 2.632" style="display:inline;fill:none;stroke:#17191c;stroke-width:1.97793;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"/>
+          <path id="path19-5" d="M101.796 115.193c-1.795 2.538-4.61 3.985-9.439 2.633" style="display:inline;fill:none;stroke:#17191c;stroke-width:1.97793;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"/>
+        </g>
+        <g id="g6" style="display:inline">
+          <path id="path3" d="M71.476 115.386c1.794 2.538 4.61 3.984 9.439 2.632-2.523-3.838-5.335-6.304-9.439-2.632" style="fill:none;stroke:#17191c;stroke-width:1.97793;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"/>
+          <path id="path6" d="M101.806 115.158c-1.794 2.538-4.61 3.985-9.438 2.633 2.523-3.838 5.334-6.304 9.438-2.633" style="display:inline;fill:none;stroke:#17191c;stroke-width:1.97793;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"/>
+        </g>
+        <g id="g8" style="display:inline">
+          <path id="path1" d="M71.476 115.386c.232 1.29 1.066 2.718 2.185 3.381 1.539.911 4.173.877 7.254-.749-.117-1.495-.582-2.91-1.072-3.807-1.254-2.295-4.449-2.12-5.81-1.486-.984.459-1.947 1.26-2.557 2.66" style="fill:none;stroke:#17191c;stroke-width:1.97793;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"/>
+          <path id="path8" d="M101.806 115.158c-.231 1.291-1.066 2.718-2.185 3.381-1.538.912-4.172.878-7.253-.748.116-1.495.581-2.91 1.071-3.808 1.255-2.295 4.45-2.119 5.81-1.485.985.458 1.948 1.26 2.557 2.66" style="fill:none;stroke:#17191c;stroke-width:1.97793;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"/>
+        </g>
+        <g id="g24" style="display:inline">
+          <path id="path10" d="M71.476 115.386c1.794 2.538 4.61 3.984 9.439 2.632-.367-.557-.5-1.386-1.014-1.727-2.767-1.839-5.654-2.975-8.425-.905" style="fill:none;stroke:#17191c;stroke-width:1.97793;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"/>
+          <path id="path24" d="M101.806 115.158c-1.794 2.538-4.61 3.985-9.438 2.633.366-.558.5-1.386 1.013-1.728 2.767-1.838 5.654-2.975 8.425-.905" style="fill:none;stroke:#17191c;stroke-width:1.97793;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"/>
+        </g>
+        <g id="g30" style="display:inline">
+          <path id="path29" d="M80.915 118.018c-1.508-3.373-4.785-6.642-9.439-2.632" style="fill:none;stroke:#17191c;stroke-width:1.97793;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"/>
+          <path id="path30" d="M92.368 117.79c1.508-3.372 4.785-6.642 9.438-2.632" style="fill:none;stroke:#17191c;stroke-width:1.97793;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"/>
+        </g>
+        <g id="g26" style="display:inline">
+          <path id="path7" d="M71.476 115.386c1.794 2.538 4.61 3.984 9.439 2.632-.031-.658-.486-1.407-1.014-1.727-2.751-1.67-3.79-.052-8.425-.905" style="fill:none;stroke:#17191c;stroke-width:1.97793;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"/>
+          <path id="path31" d="M101.806 115.158c-1.794 2.538-4.61 3.985-9.438 2.633.03-.658.494-1.394 1.013-1.728 2.545-1.636 4.17-.19 8.425-.905" style="fill:none;stroke:#17191c;stroke-width:1.97793;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"/>
+        </g>
+      </g>
+      <g id="g1" style="display:inline">
+        <path id="path12" d="M79.096 88.273s6.056 2.58 7.049 4.666c.992-2.085 7.247-4.666 7.247-4.666-4.766-10.27-9.53-16.815-14.296 0" style="fill:#17191c;fill-opacity:1;stroke:none;stroke-width:3.16469;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-dashoffset:0"/>
+        <path id="path13" d="M80.16 87.384s-1.395-8.014 4.895-7.087c5.037.743 19.156 35.241 25.446 34.75 3.918-.305 2.136 8.438-3.034 11.54 9.156-2.663 15.33-21.72 7.19-32.377-8.14-10.656-21.906-32.414-37.595-21.313-15.689 11.1 3.099 14.487 3.099 14.487" style="fill:#17191c;fill-opacity:1;stroke:none;stroke-width:3.16469;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-dashoffset:0"/>
+        <path id="path14" d="M82.753 87.855c-5.714.84-9.202 6.045-11.53 11.785-2.917 7.196-7.077 13.934-8.587 14.732-3.24 1.714-.6 9.857 3.865 12.28-12.307-2.287-20.559-38.413 7.312-46.707 27.87-8.295 8.94 7.91 8.94 7.91" style="fill:#17191c;fill-opacity:1;stroke:none;stroke-width:3.16469;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-dashoffset:0"/>
+      </g>
+      <g id="g25" style="display:inline" transform="rotate(20.085 113.883 112.151)">
+        <path id="path25" d="M105.52 91.788c.16.78 1.371 4.441-3.071 3.754" style="display:inline;fill:none;stroke:#c9483a;stroke-width:1.97764;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"/>
+        <path id="path25-3" d="M108.742 91.788c-.281 1.025-1.142 4.81 3.071 3.754" style="display:inline;fill:none;stroke:#c9483a;stroke-width:1.97764;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"/>
+        <path id="path25-1" d="M105.52 101.958c.383-.549 1.527-4.676-3.071-3.754" style="display:inline;fill:none;stroke:#c9483a;stroke-width:1.97764;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"/>
+        <path id="path25-3-2" d="M108.742 101.958c-.165-.622-.909-4.246 3.071-3.754" style="display:inline;fill:none;stroke:#c9483a;stroke-width:1.97764;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"/>
+      </g>
+      <g id="g28" style="display:inline">
+        <path id="path26" d="m63.391 78.578 3.455 6.215" style="fill:none;stroke:#c9483a;stroke-width:1.97764;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"/>
+        <path id="path27" d="m56.142 81.265 7.568 6.389" style="fill:none;stroke:#c9483a;stroke-width:1.97764;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"/>
+        <path id="path28" d="m55.352 88.888 5.949 2.116" style="fill:none;stroke:#c9483a;stroke-width:1.97764;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"/>
+      </g>
+      <g id="g32" style="display:inline;stroke:#d7eef4" transform="rotate(19.025 -68.713 179.945)scale(.7084)">
+        <path id="path32-3" d="M69.85 153.278c-1.68 1.21-3.994.87-5.169-.76-1.68 1.21-3.994.869-5.168-.761-1.175-1.63-.765-3.934.914-5.144-1.516-.622-2.673-1.467-3.03-2.892s-.044-3.018 1.575-4.092" style="display:inline;fill:none;fill-rule:evenodd;stroke:#e6f4fa;stroke-width:2.79168;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"/>
+        <path id="path32" d="M66.05 145.572c2.225-1.25 5.28-4.868 5.208-8.167" style="fill:none;stroke:#e6f4fa;stroke-width:2.79168;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"/>
+      </g>
+      <g id="g27" style="display:inline" transform="translate(-3.326 -1.5)">
+        <path id="path22" d="M70.001 99.494c-3.872 2.235-6.505.832-10.878 1.761-4.373.93-6.208 3.283-10.654 2.816s-5.751-3.15-9.835-4.97c-4.084-1.817-6.952-.992-10.274-3.983s-2.802-5.93-5.037-9.802-5.04-4.89-5.97-9.262 1.22-6.444 1.687-10.89-1.204-6.918.614-11.002 4.774-4.497 7.765-7.819c2.992-3.322 3.093-6.304 6.965-8.54s6.505-.831 10.878-1.761c4.372-.93 6.207-3.283 10.653-2.815s5.752 3.15 9.836 4.969c4.084 1.818 6.952.993 10.274 3.984s2.801 5.93 5.036 9.801c2.236 3.872 5.04 4.89 5.97 9.262s-1.219 6.444-1.686 10.89 1.204 6.919-.615 11.003-4.773 4.496-7.765 7.818c-2.991 3.323-3.092 6.305-6.964 8.54" style="fill:#e6f4fa;fill-rule:evenodd;stroke-width:1.97764;stroke-linecap:round;stroke-linejoin:round" transform="translate(37.117 44.667)"/>
+        <path id="path23" d="M155.139 159.303c3.072 3.073-2.626 5.658-5.108 5.107-6.723-1.492-7.804-10.104-5.107-15.32 4.825-9.332 17.355-10.425 25.536-5.108 12.006 7.803 13.12 24.702 5.107 35.75-10.682 14.725-32.084 15.85-45.964 5.107-17.466-13.52-18.598-39.484-5.107-56.178 16.34-20.22 46.892-21.356 66.392-5.107 22.98 19.148 24.12 54.306 5.107 76.606-21.95 25.746-61.725 26.887-86.82 5.107-28.515-24.748-29.658-69.146-5.107-97.034 27.542-31.287 76.568-32.43 107.248-5.108 34.06 30.334 35.205 83.994 5.107 117.463" style="fill:none;fill-rule:evenodd;stroke:#c9483a;stroke-width:11.3386;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1" transform="translate(40.272 67.357)scale(.3021)"/>
+      </g>
+      <g id="g38" style="display:inline" transform="translate(-3.576 -4.42)scale(1.04069)">
+        <path id="path36" d="M52.136 103.019c-4.822 1.383-15.336 4.89-15.058 12.602.277 7.712 6.713 6.104 7.331 15.085s2.206 11.955 6.55 15.827c4.345 3.872 13.59 7.816 19.757 4.984 5.987-2.75 13.095 6.133 19.419 4.114 7.531-2.404 16.623-2.063 16.845 10.391 1.681-10.709-.872-12.414-4.666-15.965-4.603-4.308-6.047-10.495-10.986-13.852-5.838-3.966-16.85-2.199-15.764-11.004s-3.276-16.928-7.833-18.156-10.772-5.41-15.595-4.026" style="display:inline;fill:#c8b7b7;fill-opacity:1;stroke:none;stroke-width:.302108px;stroke-linecap:butt;stroke-linejoin:miter;stroke-opacity:1"/>
+        <path id="path38" d="M51.792 49.303c-3.673 6.743-5.496 23.46 1.415 27.798 6.91 4.338 6.01 9.19 8.047 19.069s17.536 19.805 28.385 20.67 8.67 8.743 13.925 14.805 19.607 5.872 26.81.687c7.205-5.184 4.75-11.155 2.344-18.075-2.405-6.921 5.405-14.72.523-22.613-4.881-7.894-16.849-15.627-25.727-18.238s-14.538.233-21.524-3.591-13.852.052-19.959-1.969S54.78 57.27 51.791 49.303" style="fill:#c8b7b7;fill-opacity:1;stroke:none;stroke-width:.302108px;stroke-linecap:butt;stroke-linejoin:miter;stroke-opacity:1"/>
+      </g>
+      <g id="g35" style="display:inline" transform="translate(-15.369 -19.704)scale(1.18222)">
+        <path id="path33" d="M49.483 112.737c-1.878 2.172-2.29 6.527-1.377 9.417.976 2.496 4.384.584 4.893 3.416.235 2.172-.471 5.01 2.262 5.856 2.434.646 3.781 3.315 5.792 4.541 2.027.816 4.37-1.103 5.988 1.08 1.583 1.792 2.703 3.586 6.219 4.441s7.073.369 10.272 1.142c3.198.774 5.547 3.358 5.547 3.358-.274-1.642-5.493-7.715-9.38-8.17-3.245-1.154-5.898-4.105-7.502-6.816-1.694-1.874-5.648-2.575-6.281-5.367-.03-2.194 1.273-4.314.562-6.573-.626-2.992-3.114-7.06-6.333-8.056-3.218-.997-8.115-1.486-10.662 1.731" style="display:inline;fill:#faa;fill-opacity:1;stroke:none;stroke-width:.302108px;stroke-linecap:butt;stroke-linejoin:miter;stroke-opacity:1"/>
+        <path id="path35" d="M60.207 64.212c-3.404 9.698 10.07 16.182 11.882 21.967s9.581 2.236 15.286 6.803c5.706 4.566 10.92 13.43 18.657 12.42 7.738-1.008 16.63 10.75 19.68 3.375 3.05-7.374-3.769-11.684-6.78-18.63-3.01-6.945-13.693-.178-20.96-4.835-7.266-4.658-7.203-8.483-14.274-10.216-7.072-1.733-18.634 3.464-23.491-10.884" style="display:inline;fill:#faa;fill-opacity:1;stroke:none;stroke-width:.322269px;stroke-linecap:butt;stroke-linejoin:miter;stroke-opacity:1"/>
+      </g>
+      <g id="g40" style="display:inline" transform="translate(8.154 .741)">
+        <path id="path39" d="M73.518 77.608c5.67 4.303 6.78 2.319 11.722 3.955s-1.23 4.626 5.33 8.339c2.532 1.433 2.961 6.628 5.972 6.208 3.464-.482 8.153 3.708 5.383-4.036s-4.244-5.745-8.534-6.954-2.057-3.306-5.518-5.772c-3.023-1.814-8.006 1.869-14.355-1.74" style="fill:#fca;fill-opacity:1;stroke:none;stroke-width:.302108px;stroke-linecap:butt;stroke-linejoin:miter;stroke-opacity:1"/>
+        <path id="path40" d="M56.278 125.494c-2.285-.504-3.727-2.122-5.167-.321s-.464 6.161 3.49 5.749c3.954-.413 6.38 6.754 10.148 8.149s4.26 2.965 4.67 4.593c.184-2.294-1.066-4.171-2.944-5.455s-4-2.745-4.436-5.078-3.476-7.133-5.76-7.637" style="fill:#fca;fill-opacity:1;stroke:none;stroke-width:.302108px;stroke-linecap:butt;stroke-linejoin:miter;stroke-opacity:1"/>
+      </g>
+      <g id="g41" style="display:inline" transform="rotate(-11.987 121.586 77.48)">
+        <path id="path41" d="M108.894 75.139c.797-.768 5.184-1.843 6.194 0-1.32.887-5.92 5.318-6.194 6.577.782.948 5.752.51 6.194 0" style="fill:none;stroke:#17191c;stroke-width:1.68272;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"/>
+        <path id="path41-4" d="M113.813 67.686c1.147-.614 6.452-.427 7.005 1.98-1.776.581-8.396 4.121-9.109 5.458.581 1.321 6.341 2.417 7.005 1.98" style="fill:none;stroke:#17191c;stroke-width:1.97764;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"/>
+        <path id="path41-1" d="M113.704 80.54c.84-.337 4.495.195 4.695 1.903-1.273.267-6.121 2.212-6.715 3.083.301.958 4.202 2.153 4.695 1.902" style="fill:none;stroke:#17191c;stroke-width:1.37621;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"/>
+      </g>
+    </g>
+  </g>
+</svg>
+</div>
+  <div class="status" id="status">pick a sound source &mdash; she's waiting</div>
+  <div class="row">
+    <button id="btnTab">&#128421; tab / screen audio</button>
+    <button id="btnFile">&#127925; play a file</button>
+    <button id="btnMic">&#127908; microphone</button>
+  </div>
+  <audio id="player" controls loop></audio>
+  <input id="filein" type="file" accept="audio/*" style="display:none">
+  <p class="hint">linux tip: route the mic to "Monitor of &lt;sink&gt;" in pavucontrol
+  and she hears everything the machine plays</p>
+</div>
+
+<script>
+// ---------- rig setup ----------
+const S = {};
+// pivots sit at each tuft's root, just inside the face fill (path42),
+// so the buried end sweeps under the fill instead of opening a gap
+const TUFTS = [["path17",67.0,117.0,0.8],["path15",67.5,120.5,1.0],
+               ["path16",107.2,120.0,1.0],["path18",107.0,119.5,0.8]];
+const ZZZ = ['path41-1','path41','path41-4'];   // small -> large
+(function setup() {
+  const ids = {g7:['path19','path19-5'], g6:['path3','path6'], g8:['path1','path8']};
+  const NP = 30, refL = [71.476,115.386], refR = [101.806,115.158];
+  const OPEN = new Set(['g7']);
+  for (const [gid,[l,r]] of Object.entries(ids)) {
+    const smp = (pid, ref) => {
+      const el = document.getElementById(pid);
+      const len = el.getTotalLength();
+      const n = OPEN.has(gid) ? NP/2 : NP;
+      let pts = [];
+      for (let k = 0; k < n; k++) {
+        const p = el.getPointAtLength(len*k/(n-1));
+        pts.push([p.x, p.y]);
+      }
+      const d0 = Math.hypot(pts[0][0]-ref[0], pts[0][1]-ref[1]);
+      const d1 = Math.hypot(pts[n-1][0]-ref[0], pts[n-1][1]-ref[1]);
+      if (d1 < d0) pts.reverse();
+      if (OPEN.has(gid)) pts = pts.concat(pts.slice().reverse());
+      return pts;
+    };
+    S[gid] = {L: smp(l, refL), R: smp(r, refR)};
+  }
+  // hide everything not needed: eye states, smoke, naruto, vein, rays, sigh
+  for (const g of ['g7','g6','g8','g24','g26','g30',
+                   'g39','g36','g38','g35','g40','g27','g28','g32']) {
+    const el = document.getElementById(g);
+    if (el) el.style.display = 'none';
+  }
+  document.getElementById('g25').style.opacity = 0;
+  for (const z of ZZZ) document.getElementById(z).style.opacity = 0;
+  const g11 = document.getElementById('g11');
+  for (const nm of ['morphL','morphR']) {
+    const p = document.createElementNS('http://www.w3.org/2000/svg','path');
+    p.id = nm;
+    p.setAttribute('style',
+      'fill:none;stroke:#17191c;stroke-width:1.97793;stroke-linecap:round;stroke-linejoin:round');
+    g11.appendChild(p);
+  }
+})();
+
+function render(dx, dy, eyeO, surp, angles) {
+  const rot = (0.9*dx).toFixed(3);
+  document.getElementById('g23').setAttribute('transform',
+    `translate(${(11.449+0.55*dx).toFixed(3)} ${(6.862+dy).toFixed(3)})` +
+    `scale(.87579)rotate(${rot} 86.6 163)`);
+  const sx = 1 - 0.004*Math.abs(dx), fxc = 86.6*(1-sx);
+  document.getElementById('g11').setAttribute('transform',
+    `translate(${(0.55*dx+fxc).toFixed(3)} 0)scale(${sx.toFixed(4)} 1)`);
+  for (const [side, pid] of [['L','morphL'],['R','morphR']]) {
+    const A = S.g7[side], B = S.g6[side], C = S.g8[side];
+    const pts = A.map((p,k)=>{
+      const x0 = p[0]+(B[k][0]-p[0])*eyeO, y0 = p[1]+(B[k][1]-p[1])*eyeO;
+      return [x0+(C[k][0]-x0)*surp, y0+(C[k][1]-y0)*surp];
+    });
+    document.getElementById(pid).setAttribute('d',
+      'M'+pts.map(p=>p[0].toFixed(2)+' '+p[1].toFixed(2)).join('L'));
+  }
+  angles.forEach((a,j)=>{
+    const [id,cx,cy] = TUFTS[j];
+    document.getElementById(id).setAttribute('transform',`rotate(${a.toFixed(2)} ${cx} ${cy})`);
+  });
+}
+
+// floating zzz: each glyph loops fade-in / drift-up / fade-out, staggered
+// small -> mid -> large like a snore swelling. s gates them as sleep deepens.
+function zzz(now, s) {
+  for (let i = 0; i < 3; i++) {
+    const el = document.getElementById(ZZZ[i]);
+    if (s < 0.55) { el.style.opacity = 0; continue; }
+    const ph = ((now/2600) + i*0.333) % 1;
+    const op = ph < 0.18 ? ph/0.18 : ph < 0.66 ? 1 : (1-ph)/0.34;
+    el.style.opacity = (op * (s-0.55)/0.45).toFixed(3);
+    el.setAttribute('transform',
+      `translate(${(2.2*ph).toFixed(2)} ${(-7*ph).toFixed(2)})`);
+  }
+}
+
+// ---------- audio ----------
+let AC = null, analyser = null, srcNode = null, stream = null;
+let playing = false, freq = null;
+const statusEl = document.getElementById('status');
+const player = document.getElementById('player');
+
+function ensureAC() {
+  if (!AC) {
+    AC = new (window.AudioContext||window.webkitAudioContext)();
+    analyser = AC.createAnalyser();
+    analyser.fftSize = 1024;
+    analyser.smoothingTimeConstant = 0.5;
+    freq = new Uint8Array(analyser.frequencyBinCount);
+  }
+  if (AC.state === 'suspended') AC.resume();
+}
+function stopSource() {
+  if (srcNode) { try { srcNode.disconnect(); } catch(e){} srcNode = null; }
+  if (stream) { stream.getTracks().forEach(t=>t.stop()); stream = null; }
+  player.pause(); player.style.display = 'none';
+  playing = false;
+  for (const b of ['btnTab','btnFile','btnMic'])
+    document.getElementById(b).classList.remove('on');
+}
+function setOn(id, msg) {
+  document.getElementById(id).classList.add('on');
+  statusEl.textContent = msg;
+  playing = true;
+}
+
+document.getElementById('btnTab').onclick = async () => {
+  stopSource(); ensureAC();
+  try {
+    stream = await navigator.mediaDevices.getDisplayMedia({video:true, audio:true});
+    stream.getVideoTracks().forEach(t=>t.stop());
+    if (!stream.getAudioTracks().length) {
+      statusEl.textContent = 'no audio in that share — pick a tab and tick "share tab audio"';
+      return;
+    }
+    srcNode = AC.createMediaStreamSource(stream);
+    srcNode.connect(analyser);
+    setOn('btnTab', 'listening to the shared audio ♪');
+  } catch(e) { statusEl.textContent = 'share cancelled'; }
+};
+let fileNodeMade = false, fileNode = null;
+document.getElementById('btnFile').onclick = () => document.getElementById('filein').click();
+document.getElementById('filein').onchange = (ev) => {
+  const f = ev.target.files[0];
+  if (!f) return;
+  stopSource(); ensureAC();
+  player.src = URL.createObjectURL(f);
+  player.style.display = 'block';
+  if (!fileNodeMade) {
+    fileNode = AC.createMediaElementSource(player);
+    fileNodeMade = true;
+  }
+  fileNode.connect(analyser);
+  fileNode.connect(AC.destination);
+  srcNode = fileNode;
+  player.play();
+  setOn('btnFile', f.name + ' ♪');
+};
+document.getElementById('btnMic').onclick = async () => {
+  stopSource(); ensureAC();
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({audio:{
+      echoCancellation:false, noiseSuppression:false, autoGainControl:false}});
+    srcNode = AC.createMediaStreamSource(stream);
+    srcNode.connect(analyser);
+    setOn('btnMic', 'listening ♪ (monitor source = whole system)');
+  } catch(e) { statusEl.textContent = 'mic denied'; }
+};
+
+// ---------- the groove + the nap ----------
+const PUMP = [-1, -0.45, -1, 1, 0.45, 1];   // L l L R r R
+// drowsy eyelid script over p in 0..1: blink, mostly reopen, heavier
+// blink, barely reopen, closed for good (1 = open, 0 = closed)
+const DROWSY = [[0,1],[0.13,0.12],[0.24,0.78],[0.42,0.04],[0.53,0.30],[0.72,0],[1,0]];
+const SIL_DROWSY = 6000, SIL_ASLEEP = 10500;
+let pump = 0, x = 0, xT = 0, dy = 0, kick = 0;
+let bassAvg = 12, loudEma = 0, lastBeat = 0;
+let eyeO = 1, eyeTarget = 1, surp = 0;       // eyeO: 0 closed .. 1 open
+let mode = 'awake', lastSound = performance.now(), startleT0 = 0, sleepF = 0;
+let th = [0,0,0,0], w = [0,0,0,0], xTickPrev = 0, prevV = 0;
+let angles = [0,0,0,0], anglesPrev = [0,0,0,0], acc = 0, lastT = performance.now();
+let beats = 0;
+window.__dbg = () => ({x, beats, eyeO, playing, mode, sleepF, surp});
+window.__forceSleep = (ms) => { lastSound = performance.now() - (ms||20000); };
+
+function drowsyEye(p) {
+  for (let i = 1; i < DROWSY.length; i++) {
+    if (p <= DROWSY[i][0]) {
+      const [p0,v0] = DROWSY[i-1], [p1,v1] = DROWSY[i];
+      return v0 + (v1-v0)*(p-p0)/(p1-p0);
+    }
+  }
+  return 0;
+}
+
+function springTick(v) {   // the proven 12 Hz constants (vibing gain)
+  const gain = 1.6, k = 0.25, c = 0.30, capIn = 10, capOut = 2.6;
+  anglesPrev = angles.slice();
+  for (let j = 0; j < 4; j++) {
+    const mult = TUFTS[j][3], side = j < 2 ? 1 : -1;
+    w[j] += -gain*mult*prevV - k*th[j] - c*w[j];
+    th[j] += w[j];
+    const lo = side > 0 ? -capIn : -capOut, hi = side > 0 ? capOut : capIn;
+    const cl = Math.max(lo, Math.min(hi, th[j]));
+    if (cl !== th[j]) w[j] = 0;
+    th[j] = cl;
+  }
+  prevV = v;
+  angles = th.slice();
+}
+
+function startle(now) {
+  mode = 'startle'; startleT0 = now;
+  kick = -3.4;
+  for (const z of ZZZ) document.getElementById(z).style.opacity = 0;
+  // tuft flare: inward impulse, like a full-body flinch
+  for (let j = 0; j < 4; j++) w[j] += (j < 2 ? -2.6 : 2.6)*TUFTS[j][3];
+  statusEl.textContent = '!!';
+}
+
+// FIXME: left in the global scope for easier debugging
+let pumpThrsMult = 0.90;
+let pumpThrsAdd = 10;
+
+function loop(now) {
+  if (window.__freeze) { requestAnimationFrame(loop); return; }   // test hook
+  const dt = Math.min(50, now - lastT); lastT = now;
+  let bass = 0, total = 0;
+  if (analyser && playing) {
+    analyser.getByteFrequencyData(freq);
+    for (let i = 1; i <= 6; i++) bass += freq[i];
+    bass /= 6;
+    for (let i = 0; i < 64; i++) total += freq[i];
+    total /= 64;
+    loudEma = loudEma*0.95 + total*0.05;
+    // beat: bass pops above its own recent average
+    console.log(`bass: ${bass}; bassAvg: ${bassAvg}; thrs: ${bassAvg*pumpThrsMult + pumpThrsAdd}`);
+    if (bass > (bassAvg*pumpThrsMult + pumpThrsAdd) && now - lastBeat > 180) {
+      lastBeat = now; beats++;
+      pump = (pump + 1) % PUMP.length;
+      const amp = 1.1 + Math.min(2.1, loudEma/26);
+      xT = PUMP[pump] * amp;
+      kick = Math.min(kick, -Math.min(2.4, 0.8 + (bass - bassAvg)/60));
+    }
+    bassAvg = bassAvg*0.92 + bass*0.08;
+  }
+  const soundNow = playing && total > 6;
+  if (soundNow) lastSound = now;
+  const sil = now - lastSound;
+
+  // ---- mode machine ----
+  if (mode === 'startle') {
+    if (now - startleT0 > 900) {
+      mode = 'awake';
+      statusEl.textContent = 'okay, okay — awake ♪';
+    }
+  } else if (mode === 'asleep') {
+    if (soundNow) startle(now);          // only true sleep earns the startle
+  } else {
+    const prev = mode;
+    mode = sil > SIL_ASLEEP ? 'asleep' : sil > SIL_DROWSY ? 'drowsy' : 'awake';
+    if (mode === 'asleep' && prev !== 'asleep') statusEl.textContent = 'zzz . . .';
+  }
+
+  // ---- eyes ----
+  let ease = 0.10;
+  if (mode === 'startle') {
+    const st = now - startleT0;
+    surp += ((st < 620 ? 1 : 0) - surp) * 0.45;
+    eyeTarget = 0;                       // melt into groove-closed underneath
+    // rays flicker: on, off, on, gone
+    const g28 = document.getElementById('g28');
+    const on = st < 130 || (st > 210 && st < 330);
+    g28.style.display = on ? '' : 'none';
+  } else {
+    surp += (0 - surp) * 0.45;
+    if (mode === 'asleep') { eyeTarget = 0; ease = 0.06; }
+    else if (mode === 'drowsy') {
+      eyeTarget = drowsyEye((sil - SIL_DROWSY)/(SIL_ASLEEP - SIL_DROWSY));
+      ease = 0.25;                       // blinks need to land
+    } else eyeTarget = (playing && sil < 1800) ? 0 : 1;
+  }
+  eyeO += (eyeTarget - eyeO) * ease;
+
+  // ---- sleep depth: slow to sink, quick to surface ----
+  const sTgt = mode === 'asleep' ? 1 : 0;
+  sleepF += (sTgt - sleepF) * (sTgt ? 0.012 : 0.35);
+
+  // ---- motion integration ----
+  if (!soundNow) xT *= 0.92;             // groove drains in silence
+  x += (xT - x) * 0.30;
+  kick *= 0.86;
+  const bobAwake = 0.30*Math.sin(now/380);
+  const bobSleep = 0.60*Math.sin(now/520) + 1.1;  // deep breath, settled down
+  dy = bobAwake + (bobSleep - bobAwake)*sleepF + kick;
+  const lean = 2.0*sleepF;
+  // tuft springs at the proven 12 Hz, lerped to display rate
+  acc += dt;
+  if (acc >= 83.3) {
+    acc -= 83.3;
+    springTick(x - xTickPrev);
+    xTickPrev = x;
+  }
+  const f = Math.min(1, acc/83.3);
+  const disp = angles.map((a,j)=>anglesPrev[j] + (a-anglesPrev[j])*f);
+  zzz(now, sleepF);
+  render(x + lean, dy, eyeO, surp, disp);
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+// hidden test hook: synthetic beat into the analyser (no speakers)
+window.__vibeTest = () => {
+  ensureAC();
+  const osc = AC.createOscillator(); osc.type = 'sine'; osc.frequency.value = 70;
+  const g = AC.createGain(); g.gain.value = 0;
+  osc.connect(g); g.connect(analyser);
+  osc.start();
+  let n = 0;
+  setInterval(() => {
+    const t = AC.currentTime;
+    g.gain.cancelScheduledValues(t);
+    g.gain.setValueAtTime(0.9, t);
+    g.gain.exponentialRampToValueAtTime(0.02, t + 0.18);
+    n++;
+  }, 430);
+  playing = true;
+  statusEl.textContent = 'test groove ♪';
+};
+</script>
+</body>
+</html>
