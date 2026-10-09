@@ -35,7 +35,7 @@
 <body>
 <div class="card">
   <div class="stage"><svg xmlns="http://www.w3.org/2000/svg" id="svg1" width="393.643" height="402.069" version="1.1" viewBox="0 0 104.151 106.381">
-  <g id="layer1" transform="translate(-32.226 -47.927)">
+  <defs><filter id="boil1" x="-15%" y="-15%" width="130%" height="130%"><feTurbulence type="fractalNoise" baseFrequency="0.145" numOctaves="2" seed="7"/><feDisplacementMap in="SourceGraphic" scale="1.2"/></filter><filter id="boil2" x="-15%" y="-15%" width="130%" height="130%"><feTurbulence type="fractalNoise" baseFrequency="0.145" numOctaves="2" seed="23"/><feDisplacementMap in="SourceGraphic" scale="1.2"/></filter><filter id="boil3" x="-15%" y="-15%" width="130%" height="130%"><feTurbulence type="fractalNoise" baseFrequency="0.145" numOctaves="2" seed="41"/><feDisplacementMap in="SourceGraphic" scale="1.2"/></filter></defs><g id="layer1" transform="translate(-32.226 -47.927)">
     <g id="g23" transform="translate(11.449 6.862)scale(.87579)">
       <g id="g39" style="display:inline" transform="translate(-11.848 -15.26)scale(1.14243)">
         <path id="path37" d="M32.976 120.852c-5.644-4.34 2.799-14.991 10.542-17.76 7.744-2.767 13.234-10.635 21.102-11.644s20.382 1.818 26.81-4.142c6.43-5.96 11.442-12.253 21.243-10.137 9.8 2.117 13.593 12.443 17.862 19.717 4.27 7.274 8.703 19.922-1.698 22.758s-14.507 17.364-22.34 13.21c-7.833-4.153-15.487-3.593-25.798 1.248s-33.392 4.629-39.877-1.154c-6.484-5.784-2.201-7.755-7.846-12.096" style="fill:#c8b7b7;fill-opacity:1;stroke:none;stroke-width:.302108px;stroke-linecap:butt;stroke-linejoin:miter;stroke-opacity:1"/>
@@ -145,6 +145,7 @@
     <button id="btnTab">&#128421; tab / screen audio</button>
     <button id="btnFile">&#127925; play a file</button>
     <button id="btnMic">&#127908; microphone</button>
+    <button id="btnBoil">&#12336; line boil</button>
   </div>
   <audio id="player" controls loop></audio>
   <input id="filein" type="file" accept="audio/*" style="display:none">
@@ -217,7 +218,7 @@ function render(dx, dy, eyeO, surp, angles) {
   // convexity: front features (eyes + whiskers) travel farther than the
   // face oval and compress a touch more — three depth layers total
   const s2 = 1 - 0.0025*Math.abs(dx);
-  const ftr = `translate(${(0.30*dx + 86.6*(1-s2)).toFixed(3)} 0)scale(${s2.toFixed(4)} 1)`;
+  const ftr = `translate(${(0.60*dx + 86.6*(1-s2)).toFixed(3)} 0)scale(${s2.toFixed(4)} 1)`;
   document.getElementById('gFront').setAttribute('transform', ftr);
   document.getElementById('g2').setAttribute('transform', ftr);
   for (const [side, pid] of [['L','morphL'],['R','morphR']]) {
@@ -329,6 +330,22 @@ document.getElementById('btnMic').onclick = async () => {
     setOn('btnMic', 'listening ♪ (monitor source = whole system)');
   } catch(e) { statusEl.textContent = 'mic denied'; }
 };
+
+// ---------- line boil: stepped re-seeding, held on threes ----------
+let boilOn = false, boilPhase = -1;
+document.getElementById('btnBoil').onclick = (ev) => {
+  boilOn = !boilOn;
+  ev.target.classList.toggle('on', boilOn);
+  if (!boilOn) { document.getElementById('g23').removeAttribute('filter'); boilPhase = -1; }
+};
+function boil(now) {
+  if (!boilOn) return;
+  const ph = Math.floor(now/150) % 3;        // ~6.7 redraws/s, snapped
+  if (ph !== boilPhase) {
+    boilPhase = ph;
+    document.getElementById('g23').setAttribute('filter', `url(#boil${ph+1})`);
+  }
+}
 
 // ---------- offline bake (After Effects style): study the whole song ----------
 let baked = null, bkBi = 0, bkPrevT = -1, bkPend = [];
@@ -662,6 +679,7 @@ function loop(now) {
   const f = Math.min(1, acc/83.3);
   const disp = angles.map((a,j)=>anglesPrev[j] + (a-anglesPrev[j])*f);
   zzz(now, sleepF);
+  boil(now);
   render(x + lean, dy, eyeO, surp, disp);
   requestAnimationFrame(loop);
 }
