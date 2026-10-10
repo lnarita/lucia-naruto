@@ -250,85 +250,150 @@ function zzz(now, s) {
   }
 }
 
-// ---------- audio ----------
-let AC = null, analyser = null, srcNode = null, stream = null;
-let playing = false, freq = null;
+// =====================================================================
+//  sound -> motion
+//
+//    source --> driver --------------------> features --> motion --> render
+//               baked grid   (files)         { b, bpm, energy,
+//               live clock   (tab / mic)       groove, conf, ... }
+//
+//  The one rule: everything that moves is a smooth function of a
+//  continuous beat number b (beat k lands exactly on b = k), passed
+//  through springs. Detections only ever *steer the clock*; they never
+//  yank the head. (Event-driven targets + first-order easing made
+//  velocity jump on every hit — that was the twitch.)
+// =====================================================================
+const CFG = {
+  // analysis bands (Hz), shared by live + baked ears so both hear alike
+  bands:  [[30, 120], [120, 400], [400, 1500], [1500, 4500], [4500, 11000]],
+  bandW:  [1.0, 0.6, 0.35, 0.5, 0.8],   // how much each band's onsets count
+  floorDb: 45,             // this far under a band's peak counts as silence
+  tempoPrior: 120, tempoOct: 1.0,       // log-gaussian tempo preference
+  slowBpm: [76, 96],       // below this ramp she sways however hard it hits
+  halfTime: [88, 96],      // sway on every other beat above this (hysteresis)
+  grooveBaked: [5, 15],    // on-beat onset strength (weighted dB) -> 0..1 pump
+  grooveLive:  [4, 12],
+  liveSilenceDb: -70,      // analyser band-sum under this = silence
+  bakedSilenceDb: -45,     // re. song peak
+  avOffset: 0.03,          // s, draw slightly ahead of the audio
+  liveLatency: 0.07,       // s, capture + analysis lag on tab / mic
+  arrive: 0.5,             // beats: pump spring time-to-peak (targets switch this early)
+  zeta: 0.55,              // pump/sway spring damping: ~13% overshoot, a soft landing
+  pumpAmp: [1.0, 3.1], swayAmp: [1.3, 2.9],      // [quiet, loud]
+  nodDepth: [0.35, 1.5], swayDip: [0.25, 0.7],
+};
+const PUMP = [-1, -0.45, -1, 1, 0.45, 1];   // L l L R r R
+// drowsy eyelid script over p in 0..1: blink, mostly reopen, heavier
+// blink, barely reopen, closed for good (1 = open, 0 = closed)
+const DROWSY = [[0,1],[0.13,0.12],[0.24,0.78],[0.42,0.04],[0.53,0.30],[0.72,0],[1,0]];
+const SIL_DROWSY = 6000, SIL_ASLEEP = 10500;
+
+// ---------- small math ----------
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const lerp = (a, b, t) => a + (b - a)*t;
+const mix = (r, t) => r[0] + (r[1] - r[0])*t;
+const sstep = (a, b, v) => { const t = clamp((v - a)/(b - a), 0, 1); return t*t*(3 - 2*t); };
+const mod = (n, m) => ((n % m) + m) % m;
+const approach = (cur, tgt, tau, dt) => tgt + (cur - tgt)*Math.exp(-dt/tau);   // s, s
+const tempoWeight = (bpm) =>
+  Math.exp(-0.5*Math.pow(Math.log2(bpm/CFG.tempoPrior)/CFG.tempoOct, 2));
+function bisect(a, t) {
+  let lo = 0, hi = a.length;
+  while (lo < hi) { const m = (lo + hi) >> 1; if (a[m] < t) lo = m + 1; else hi = m; }
+  return lo;
+}
+
+// ---------- audio plumbing ----------
+let AC = null, analyser = null, spec = null, bandBins = null;
+let srcKind = null, srcNode = null, stream = null, fileNode = null, fileUrl = null;
+let testNodes = [], testTimers = [];
+let baked = null, bakeToken = 0;
 const statusEl = document.getElementById('status');
 const player = document.getElementById('player');
 
 function ensureAC() {
   if (!AC) {
-    AC = new (window.AudioContext||window.webkitAudioContext)();
+    AC = new (window.AudioContext || window.webkitAudioContext)();
     analyser = AC.createAnalyser();
-    analyser.fftSize = 1024;
-    analyser.smoothingTimeConstant = 0.5;
-    freq = new Uint8Array(analyser.frequencyBinCount);
+    analyser.fftSize = 2048;
+    analyser.smoothingTimeConstant = 0;     // flux wants raw frames
+    spec = new Float32Array(analyser.frequencyBinCount);
+    const hz = AC.sampleRate/analyser.fftSize;
+    bandBins = CFG.bands.map(([lo, hi]) =>
+      [Math.max(1, Math.round(lo/hz)), Math.min(spec.length - 1, Math.round(hi/hz))]);
   }
   if (AC.state === 'suspended') AC.resume();
 }
 function stopSource() {
-  if (srcNode) { try { srcNode.disconnect(); } catch(e){} srcNode = null; }
-  if (stream) { stream.getTracks().forEach(t=>t.stop()); stream = null; }
+  if (srcNode) { try { srcNode.disconnect(); } catch (e) {} srcNode = null; }
+  if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+  testNodes.forEach(n => { try { n.stop(); } catch (e) {} });
+  testTimers.forEach(clearInterval);
+  testNodes = []; testTimers = [];
   player.pause(); player.style.display = 'none';
-  playing = false;
-  for (const b of ['btnTab','btnFile','btnMic'])
+  srcKind = null; baked = null; bakeToken++;
+  liveReset();
+  for (const b of ['btnTab', 'btnFile', 'btnMic'])
     document.getElementById(b).classList.remove('on');
 }
-function setOn(id, msg) {
-  document.getElementById(id).classList.add('on');
+function setOn(id, kind, msg) {
+  if (id) document.getElementById(id).classList.add('on');
+  srcKind = kind;
   statusEl.textContent = msg;
-  playing = true;
 }
 
 document.getElementById('btnTab').onclick = async () => {
   stopSource(); ensureAC();
   try {
-    stream = await navigator.mediaDevices.getDisplayMedia({video:true, audio:true});
-    stream.getVideoTracks().forEach(t=>t.stop());
+    stream = await navigator.mediaDevices.getDisplayMedia({video: true, audio: true});
+    stream.getVideoTracks().forEach(t => t.stop());
     if (!stream.getAudioTracks().length) {
       statusEl.textContent = 'no audio in that share — pick a tab and tick "share tab audio"';
       return;
     }
     srcNode = AC.createMediaStreamSource(stream);
     srcNode.connect(analyser);
-    setOn('btnTab', 'listening to the shared audio ♪');
-  } catch(e) { statusEl.textContent = 'share cancelled'; }
+    setOn('btnTab', 'tab', 'listening to the shared audio ♪');
+  } catch (e) { statusEl.textContent = 'share cancelled'; }
 };
-let fileNodeMade = false, fileNode = null;
 document.getElementById('btnFile').onclick = () => document.getElementById('filein').click();
-document.getElementById('filein').onchange = async (ev) => {
+document.getElementById('filein').onchange = (ev) => {
   const f = ev.target.files[0];
-  if (!f) return;
+  ev.target.value = '';                    // picking the same file again still fires
+  if (f) loadFile(f);
+};
+async function loadFile(f) {
   stopSource(); ensureAC();
-  baked = null; bkBi = 0; bkPrevT = -1; bkPend = [];
-  player.src = URL.createObjectURL(f);
+  const token = bakeToken;
+  if (fileUrl) URL.revokeObjectURL(fileUrl);
+  player.src = fileUrl = URL.createObjectURL(f);
   player.style.display = 'block';
-  if (!fileNodeMade) {
-    fileNode = AC.createMediaElementSource(player);
-    fileNodeMade = true;
-  }
+  if (!fileNode) fileNode = AC.createMediaElementSource(player);
   fileNode.connect(analyser);
   fileNode.connect(AC.destination);
   srcNode = fileNode;
-  player.play();
-  setOn('btnFile', f.name + ' — reading the song… ♪');
+  MC.ok = false;
+  player.play().catch(() => {});
+  // live ears carry her until the bake lands
+  setOn('btnFile', 'file', `${f.name} — reading the song… ♪`);
   try {
     const b = await bakeTrack(await f.arrayBuffer());
-    if (srcNode === fileNode && b.beats.length > 4) {
-      baked = b; bkBi = 0; bkPrevT = -1; bkPend = [];
+    if (token !== bakeToken) return;       // another source took over meanwhile
+    if (b) {
+      baked = b;
       statusEl.textContent = `${f.name} — she knows this one ♪ (${b.bpm.toFixed(0)} bpm)`;
-    }
-  } catch (e) { /* undecodable: stay in live mode */ }
-};
+    } else statusEl.textContent = `${f.name} — no steady beat here, she'll just feel it ♪`;
+  } catch (e) { /* undecodable: stay on the live ears */ }
+}
 document.getElementById('btnMic').onclick = async () => {
   stopSource(); ensureAC();
   try {
-    stream = await navigator.mediaDevices.getUserMedia({audio:{
-      echoCancellation:false, noiseSuppression:false, autoGainControl:false}});
+    stream = await navigator.mediaDevices.getUserMedia({audio: {
+      echoCancellation: false, noiseSuppression: false, autoGainControl: false}});
     srcNode = AC.createMediaStreamSource(stream);
     srcNode.connect(analyser);
-    setOn('btnMic', 'listening ♪ (monitor source = whole system)');
-  } catch(e) { statusEl.textContent = 'mic denied'; }
+    setOn('btnMic', 'mic', 'listening ♪ (monitor source = whole system)');
+  } catch (e) { statusEl.textContent = 'mic denied'; }
 };
 
 // ---------- line boil: stepped re-seeding, held on threes ----------
@@ -347,142 +412,398 @@ function boil(now) {
   }
 }
 
-// ---------- offline bake (After Effects style): study the whole song ----------
-let baked = null, bkBi = 0, bkPrevT = -1, bkPend = [];
+// ---------- live ears: a beat clock that listens ----------
+// Onsets (multi-band log flux) land on a fixed 60 Hz grid. Ten times a
+// second we autocorrelate the last 8 s for tempo and comb-filter it for
+// phase, then *steer* a free-running clock by bending its rate — so b
+// never jumps, it just catches up. False hits barely move it.
+const LFS = 60, LN = 8*LFS;
+const LV = {};
+const lvO = new Float32Array(LN), lvS = new Float32Array(LN), lvA = new Float32Array(LN);
+function liveReset() {
+  Object.assign(LV, {
+    grid: new Float32Array(LN), head: 0, filled: 0, gT: -1, lastT: -1, lastO: 0,
+    prevDb: null, peakDb: null, peakTot: -200, totDb: -200,
+    T: 0.5, disagree: 0, b: 0, rate: 2, rateT: 2, nextEst: 0,
+    conf: 0, groove: 0, energy: 0, sound: false, div: 2, announced: false,
+  });
+}
+liveReset();
 
-async function bakeTrack(ab) {
-  const buf = await AC.decodeAudioData(ab);
-  const sr = buf.sampleRate, N = buf.length;
-  // the AE trick, verbatim: duplicate the audio, EQ each copy, envelope each
-  async function band(type, fq) {
-    const oc = new OfflineAudioContext(1, N, sr);
-    const s = oc.createBufferSource(); s.buffer = buf;
-    let n = s;
-    if (type) { const f = oc.createBiquadFilter(); f.type = type; f.frequency.value = fq; n.connect(f); n = f; }
-    n.connect(oc.destination); s.start();
-    return (await oc.startRendering()).getChannelData(0);
+function liveFrame(t, dt) {
+  analyser.getFloatFrequencyData(spec);
+  const nb = bandBins.length, db = new Array(nb);
+  let tot = 0;
+  for (let i = 0; i < nb; i++) {
+    let p = 0;
+    for (let k = bandBins[i][0]; k <= bandBins[i][1]; k++) p += Math.pow(10, spec[k]/10);
+    tot += p;
+    db[i] = 10*Math.log10(p + 1e-20);
   }
-  const [full, low, high] = await Promise.all(
-    [band(null, 0), band('lowpass', 150), band('highpass', 4000)]);
-  const hop = Math.round(sr/60), F = Math.floor(N/hop), hopS = hop/sr;
-  const env = (d) => {
-    const e = new Float32Array(F);
-    for (let i = 0; i < F; i++) {
-      let s = 0; const o = i*hop;
-      for (let j = 0; j < hop; j += 4) s += d[o+j]*d[o+j];
-      e[i] = Math.sqrt(s/(hop/4));
+  LV.totDb = 10*Math.log10(tot + 1e-20);
+  LV.sound = LV.totDb > CFG.liveSilenceDb;
+  // onset strength: positive dB steps per band, floored under a slow peak
+  if (!LV.peakDb) LV.peakDb = db.slice();
+  let o = 0;
+  for (let i = 0; i < nb; i++) {
+    LV.peakDb[i] = Math.max(db[i], LV.peakDb[i] - 1.5*dt);
+    const fl = Math.max(LV.peakDb[i] - CFG.floorDb, -110);
+    if (LV.prevDb) {
+      const a = Math.max(db[i], fl), p = Math.max(LV.prevDb[i], fl);
+      if (a > p) o += CFG.bandW[i]*(a - p);
     }
-    return e;
+  }
+  LV.prevDb = db;
+  o *= clamp(1/(60*Math.max(dt, 1e-3)), 0.25, 4);    // per 60th, any refresh rate
+  // resample onto the fixed grid
+  if (LV.gT < 0 || t - LV.gT > 0.5) {               // first frame / tab was hidden
+    LV.gT = t; LV.lastT = t; LV.lastO = o; LV.filled = 0;
+  }
+  while (LV.gT + 1/LFS <= t) {
+    LV.gT += 1/LFS;
+    const a = (LV.gT - LV.lastT)/Math.max(1e-6, t - LV.lastT);
+    LV.grid[LV.head] = LV.lastO + (o - LV.lastO)*a;
+    LV.head = (LV.head + 1) % LN;
+    LV.filled = Math.min(LN, LV.filled + 1);
+  }
+  LV.lastT = t; LV.lastO = o;
+  // loudness vs a slowly releasing peak: volume-independent energy
+  LV.peakTot = Math.max(LV.totDb, LV.peakTot - 0.5*dt);
+  LV.energy = approach(LV.energy, sstep(-26, -3, LV.totDb - LV.peakTot), 0.3, dt);
+  // run the clock, then (sometimes) listen and steer it
+  LV.rate = approach(LV.rate, LV.rateT, 0.25, dt);
+  LV.b += dt*LV.rate;
+  if (t >= LV.nextEst && LV.filled >= 3*LFS) { LV.nextEst = t + 0.1; liveEstimate(t); }
+  if (!LV.sound) LV.conf = approach(LV.conf, 0, 1.5, dt);
+  return {
+    b: LV.b + (CFG.liveLatency + CFG.avOffset)*LV.rate,   // predict past the lag
+    bpm: 60/LV.T, energy: LV.energy, groove: LV.groove, conf: LV.conf,
+    sound: LV.sound, div: LV.div, accent: 1,
   };
-  const loudE = env(full), bassE = env(low), trebE = env(high);
-  let peak = 1e-6;
-  for (const v of loudE) peak = Math.max(peak, v);
-  for (let i = 0; i < F; i++) { loudE[i] /= peak; bassE[i] /= peak; trebE[i] /= peak; }
-  // combined onset envelope (bass thump + weighted treble snap)
-  const ons = new Float32Array(F);
-  for (let i = 1; i < F; i++)
-    ons[i] = Math.max(0, bassE[i]-bassE[i-1])
-           + percTrebleWeight*Math.max(0, trebE[i]-trebE[i-1]);
-  // tempo: autocorrelation over 300-1500ms lags, log-gauss preference ~115bpm
-  const lo = Math.round(0.30/hopS), hi = Math.min(F-2, Math.round(1.50/hopS));
-  let P = lo, bestSc = -1;
-  for (let L = lo; L <= hi; L++) {
+}
+
+function liveEstimate(t) {
+  const n = LV.filled;
+  for (let i = 0; i < n; i++) lvO[i] = LV.grid[(LV.head - n + i + LN) % LN];
+  let mean = 0;
+  for (let i = 0; i < n; i++) {
+    lvS[i] = (lvO[Math.max(0, i - 1)] + 2*lvO[i] + lvO[Math.min(n - 1, i + 1)])/4;
+    mean += lvO[i];
+  }
+  mean /= n;
+  // tempo: autocorrelation, harmonically enhanced, prior + continuity weighted
+  const lMin = Math.floor(LFS*60/220), lMax = Math.ceil(LFS*60/50);
+  const lTop = Math.min(n - 1, 2*lMax + 1);
+  for (let L = 0; L <= lTop; L++) {
     let s = 0;
-    for (let i = L; i < F; i++) s += ons[i]*ons[i-L];
-    s /= (F - L);
-    s *= Math.exp(-0.5*Math.pow(Math.log2(60/(L*hopS)/115)/0.6, 2));
-    if (s > bestSc) { bestSc = s; P = L; }
+    for (let i = L; i < n; i++) s += (lvO[i] - mean)*(lvO[i - L] - mean);
+    lvA[L] = s/(n - L);
   }
-  // phase: comb offset with the most onset energy on the grid
-  let bestOff = 0, bo = -1;
-  for (let off = 0; off < P; off++) {
-    let s = 0, c = 0;
-    for (let i = off; i < F; i += P) { s += ons[i]; c++; }
-    if (s/c > bo) { bo = s/c; bestOff = off; }
+  if (lvA[0] < 1e-6) { LV.conf = approach(LV.conf, 0, 1.0, 0.1); return; }
+  const sc = [];
+  let best = -Infinity, bL = lMin;
+  for (let L = lMin; L <= lMax; L++) {
+    const near = Math.exp(-0.5*Math.pow(Math.log2(L/LFS/LV.T)/0.1, 2));
+    sc[L] = (lvA[L] + 0.5*lvA[Math.min(2*L, lTop)])*tempoWeight(LFS*60/L)*(0.6 + 0.4*near);
+    if (sc[L] > best) { best = sc[L]; bL = L; }
   }
-  // beat times, snapped to nearby onset peaks (absorbs gentle drift)
-  let onsMean = 0;
-  for (const v of ons) onsMean += v;
-  onsMean /= F;
-  const beats = [], strength = [], rad = Math.max(1, Math.round(P*0.18));
-  let pos = bestOff;
-  while (pos < F) {
-    const bi = Math.round(pos);
-    let bv = -1, bj = bi;
-    for (let j = Math.max(0, bi-rad); j <= Math.min(F-1, bi+rad); j++)
-      if (ons[j] > bv) { bv = ons[j]; bj = j; }
-    beats.push(bj*hopS);
-    strength.push(Math.min(3, bv/(onsMean + 1e-9)));
-    pos = bi + P + Math.max(-rad, Math.min(rad, bj - bi))*0.5;
+  let Lr = bL;
+  if (bL > lMin && bL < lMax) {
+    const a = sc[bL - 1], c = sc[bL + 1], den = a - 2*best + c;
+    if (den < 0) Lr = bL + 0.5*(a - c)/den;
   }
-  // grv track: 4s forward-looking percussiveness windows every 0.5s —
-  // forward-looking means she feels the chorus coming
-  const win = Math.round(4/hopS), step = Math.round(0.5/hopS);
-  const grvT = [], rawPerc = [];
-  for (let o = 0; o < F; o += step) {
-    const e = Math.min(F, o + win), c = e - o;
-    let ob = 0, ot = 0, ld = 0;
-    for (let i = Math.max(1, o); i < e; i++) {
-      ob += Math.max(0, bassE[i]-bassE[i-1]);
-      ot += Math.max(0, trebE[i]-trebE[i-1]);
-      ld += loudE[i];
+  const clar = clamp(lvA[bL]/lvA[0], 0, 1);        // how periodic the onsets are
+  const Pc = Lr/LFS;
+  if (clar > 0.1) {
+    if (Math.abs(Math.log2(Pc/LV.T)) < 0.1) { LV.T += (Pc - LV.T)*0.2; LV.disagree = 0; }
+    else if (++LV.disagree >= (LV.conf < 0.3 ? 3 : 15)) { LV.T = Pc; LV.disagree = 0; }
+  }
+  // phase: comb over the recent past — where do beats keep landing?
+  const T = LV.T, K = Math.max(1, Math.min(8, Math.floor(n/LFS/T) - 1));
+  const steps = Math.max(1, Math.round(T*LFS));
+  let bS = -1, bPh = 0, sum = 0;
+  for (let j = 0; j < steps; j++) {
+    let s = 0, ws = 0;
+    for (let k = 0, w = 1; k < K; k++, w *= 0.8) {
+      const x = (n - 1) - (j/LFS + k*T)*LFS;
+      if (x < 0) break;
+      const i0 = Math.floor(x), fr = x - i0;
+      s += w*(lvS[i0]*(1 - fr) + lvS[Math.min(n - 1, i0 + 1)]*fr);
+      ws += w;
     }
-    const p = (ob/c + percTrebleWeight*ot/c)/(ld/c + 0.02);
-    rawPerc.push(p);
-    grvT.push(Math.min(1, Math.max(0, (p - bakedPercLo)/(bakedPercHi - bakedPercLo))));
+    s /= ws || 1; sum += s;
+    if (s > bS) { bS = s; bPh = j/LFS; }
   }
-  return {beats, strength, grv: grvT, grvHop: step*hopS, loud: loudE, hopS,
-          rawPerc, bpm: 60/(P*hopS), dur: N/sr};
-}
-function bisect(a, t) {
-  let lo2 = 0, hi2 = a.length;
-  while (lo2 < hi2) { const m = (lo2+hi2)>>1; if (a[m] < t) lo2 = m+1; else hi2 = m; }
-  return lo2;
+  const mS = sum/steps;
+  // steer: phase error -> a bounded, briefly bent clock rate
+  const fC = LV.b - (t - LV.gT)*LV.rate;            // clock at the newest grid sample
+  let e = bPh/T - (fC - Math.floor(fC));
+  e -= Math.round(e);                               // wrap to [-0.5, 0.5]
+  const cT = sstep(0.08, 0.35, clar)*sstep(0.4, 1.5, (bS - mS)/(mS + 0.05));
+  LV.conf = approach(LV.conf, LV.sound ? cT : 0, 1.0, 0.1);
+  LV.rateT = (1 + clamp(0.35*e, -0.2, 0.2)*(0.3 + 0.7*cT))/T;
+  const bpm = 60/T;
+  LV.groove = approach(LV.groove,
+    sstep(CFG.grooveLive[0], CFG.grooveLive[1], bS)*sstep(CFG.slowBpm[0], CFG.slowBpm[1], bpm),
+    2.0, 0.1);
+  if (LV.div === 1 && bpm > CFG.halfTime[1]) LV.div = 2;
+  else if (LV.div === 2 && bpm < CFG.halfTime[0]) LV.div = 1;
+  if (!LV.announced && LV.conf > 0.5 && srcKind !== 'file') {
+    LV.announced = true;
+    statusEl.textContent += ` ~${bpm.toFixed(0)} bpm`;
+  }
 }
 
-// ---------- the groove + the sway + the nap ----------
-const PUMP = [-1, -0.45, -1, 1, 0.45, 1];   // L l L R r R
+// ---------- baked ears: study the whole song first ----------
+// Same bands + flux as the live ears, but offline and with hindsight:
+// global tempo by autocorrelation, beats by dynamic programming (Ellis
+// 2007), then the grid is regularized so the clock runs silky.
+async function bakeTrack(ab) {
+  const src = await AC.decodeAudioData(ab);
+  const SR = 22050, HOP = 256, FR = SR/HOP, nb = CFG.bands.length;
+  const N = Math.ceil(src.duration*SR);
+  if (N < SR*4) return null;
+  // the AE trick, natively: one offline render, one channel per EQ'd band
+  const oc = new OfflineAudioContext(nb, N, SR);
+  const s = oc.createBufferSource(); s.buffer = src;
+  const merge = oc.createChannelMerger(nb);
+  CFG.bands.forEach(([lo, hi], i) => {
+    let node = s;
+    const stage = (type, fq) => { for (let r = 0; r < 2; r++) {
+      const f = oc.createBiquadFilter(); f.type = type; f.frequency.value = fq;
+      node.connect(f); node = f; } };
+    if (i > 0) stage('highpass', lo);
+    if (i < nb - 1) stage('lowpass', hi);
+    node.connect(merge, 0, i);
+  });
+  merge.connect(oc.destination);
+  s.start();
+  const out = await oc.startRendering();
+  // band envelopes (dB): 256-sample energies, newest-heavy 4-frame window —
+  // causal, so an attack registers on its own frame instead of early
+  const nF = Math.floor(N/HOP), dB = [], raw = new Float32Array(nF);
+  for (let i = 0; i < nb; i++) {
+    const d = out.getChannelData(i), e = new Float32Array(nF);
+    for (let f = 0; f < nF; f++) {
+      let a = 0;
+      for (let j = f*HOP, z = j + HOP; j < z; j++) a += d[j]*d[j];
+      raw[f] = a/HOP;
+    }
+    for (let f = 0; f < nF; f++) {
+      const a = 4*raw[f] + 3*(raw[f-1] || 0) + 2*(raw[f-2] || 0) + (raw[f-3] || 0);
+      e[f] = 10*Math.log10(a/10 + 1e-12);
+    }
+    dB.push(e);
+  }
+  const pct = (arr, q) => { const c = Float32Array.from(arr).sort(); return c[Math.floor(q*(c.length - 1))]; };
+  const loud = new Float32Array(nF);
+  for (let f = 0; f < nF; f++) {
+    let p = 0;
+    for (let i = 0; i < nb; i++) p += Math.pow(10, dB[i][f]/10);
+    loud[f] = 10*Math.log10(p + 1e-12);
+  }
+  const lPk = pct(loud, 0.995);
+  for (let f = 0; f < nF; f++) loud[f] -= lPk;      // dB re. song peak
+  const floors = dB.map(e => pct(e, 0.995) - CFG.floorDb);
+  const ons = new Float32Array(nF);
+  for (let f = 1; f < nF; f++) {
+    let o = 0;
+    for (let i = 0; i < nb; i++) {
+      const a = Math.max(dB[i][f], floors[i]), p = Math.max(dB[i][f-1], floors[i]);
+      if (a > p) o += CFG.bandW[i]*(a - p);
+    }
+    ons[f] = o;
+  }
+  // global tempo
+  let mean = 0;
+  for (let f = 0; f < nF; f++) mean += ons[f];
+  mean /= nF;
+  const lMin = Math.floor(FR*60/220), lMax = Math.ceil(FR*60/50);
+  const lTop = Math.min(nF - 1, 2*lMax + 1), A = new Float64Array(lTop + 1);
+  for (let L = 0; L <= lTop; L++) {
+    let acc = 0;
+    for (let f = L; f < nF; f++) acc += (ons[f] - mean)*(ons[f - L] - mean);
+    A[L] = acc/(nF - L);
+  }
+  if (!(A[0] > 0)) return null;
+  const sc = new Float64Array(lMax + 2);
+  let best = -Infinity, bL = lMin;
+  for (let L = lMin; L <= lMax; L++) {
+    sc[L] = (A[L] + 0.5*A[Math.min(2*L, lTop)])*tempoWeight(FR*60/L);
+    if (sc[L] > best) { best = sc[L]; bL = L; }
+  }
+  let P = bL;
+  if (bL > lMin && bL < lMax) {
+    const a = sc[bL - 1], c = sc[bL + 1], den = a - 2*best + c;
+    if (den < 0) P = bL + 0.5*(a - c)/den;
+  }
+  const clar = clamp(A[bL]/A[0], 0, 1);
+  // DP beat tracking: reward onsets, penalize deviating from the period
+  let sd = 0;
+  for (let f = 0; f < nF; f++) sd += (ons[f] - mean)*(ons[f] - mean);
+  sd = Math.sqrt(sd/nF) || 1;
+  const loc = new Float32Array(nF);
+  for (let f = 0; f < nF; f++) loc[f] = ((ons[f-1] || 0) + 2*ons[f] + (ons[f+1] || 0))/(4*sd);
+  const C = new Float32Array(nF), back = new Int32Array(nF).fill(-1);
+  const dMin = Math.max(1, Math.round(P/2)), dMax = Math.round(2*P);
+  const pen = new Float32Array(dMax + 1);
+  for (let d = dMin; d <= dMax; d++) pen[d] = -100*Math.pow(Math.log(d/P), 2);
+  for (let f = 0; f < nF; f++) {
+    let bv = -Infinity, bj = -1;
+    for (let d = dMin; d <= dMax && d <= f; d++) {
+      const v = C[f - d] + pen[d];
+      if (v > bv) { bv = v; bj = f - d; }
+    }
+    if (bj >= 0 && bv > 0) { C[f] = loc[f] + bv; back[f] = bj; } else C[f] = loc[f];
+  }
+  let end = nF - 1, ev = -Infinity;
+  for (let f = Math.max(0, nF - Math.round(P)); f < nF; f++) if (C[f] > ev) { ev = C[f]; end = f; }
+  const bf = [];
+  for (let f = end; f >= 0; f = back[f]) bf.push(f);
+  bf.reverse();
+  const loudAt = (f) => loud[clamp(f, 0, nF - 1)];
+  while (bf.length && loudAt(bf[0]) < CFG.bakedSilenceDb) bf.shift();
+  while (bf.length && loudAt(bf[bf.length - 1]) < CFG.bakedSilenceDb) bf.pop();
+  if (bf.length < 8) return null;
+  // regularize: local linear fit over 5 beats — follows tempo drift,
+  // irons out per-beat jitter so the clock's speed never stutters
+  const n = bf.length, t0 = bf.map(f => (f + 0.5)/FR), times = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    const a = Math.max(0, i - 2), z = Math.min(n - 1, i + 2), m = z - a + 1;
+    let sx = 0, sy = 0, sxx = 0, sxy = 0;
+    for (let j = a; j <= z; j++) { sx += j; sy += t0[j]; sxx += j*j; sxy += j*t0[j]; }
+    const k = (m*sxy - sx*sy)/(m*sxx - sx*sx);
+    times[i] = (sy - k*sx)/m + k*i;
+    if (i && times[i] < times[i - 1] + 0.1) times[i] = times[i - 1] + 0.1;
+  }
+  // per-beat character
+  const str = bf.map(f => {
+    let m = 0;
+    for (let q = -2; q <= 2; q++) m = Math.max(m, ons[clamp(f + q, 0, nF - 1)]);
+    return m;
+  });
+  const med = Float32Array.from(str).sort()[n >> 1] || 1;
+  const bpm = 60*FR/P, slow = sstep(CFG.slowBpm[0], CFG.slowBpm[1], bpm);
+  const energy = new Float32Array(n), groove = new Float32Array(n), accent = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const f0 = bf[i], f1 = i + 1 < n ? bf[i + 1] : f0 + Math.round(P);
+    let l = 0, c = 0;
+    for (let f = f0; f < f1 && f < nF; f++) { l += Math.pow(10, loud[f]/10); c++; }
+    energy[i] = sstep(-26, -3, 10*Math.log10(l/Math.max(1, c) + 1e-12));
+    // forward-looking window: she feels the chorus coming
+    let p = 0, pc = 0;
+    for (let j = Math.max(0, i - 2); j <= Math.min(n - 1, i + 5); j++) { p += str[j]; pc++; }
+    groove[i] = sstep(CFG.grooveBaked[0], CFG.grooveBaked[1], p/pc)*slow;
+    accent[i] = clamp(0.75 + 0.25*str[i]/med, 0.7, 1.35);
+  }
+  return {times, bpm, energy, groove, accent, loud, fr: FR, clar,
+          conf: sstep(0.04, 0.2, clar),
+          div: bpm > (CFG.halfTime[0] + CFG.halfTime[1])/2 ? 2 : 1,
+          dur: src.duration};
+}
 
-// FIXME: left in the global scope for easier debugging
-// NOTE: semantics changed — thresholds now apply to the bass ONSET
-// (frame-to-frame rise) vs its own average rise, not to the bass level.
-// A level detector can't see kicks over a sustained bassline; a rise can.
-let pumpThrsMult = 1.7;
-let pumpThrsAdd = 3;
-let strongThrsMult = 2.6;   // stricter twin: feeds tempo estimate + sway PLL
-let strongThrsAdd = 6;
-// ballad boundary: percussiveness (bass onset flux / sustained loudness)
-// below percLo -> full sway, above percHi -> full pump
-let balladPercLo = 0.05, balladPercHi = 0.15;
-// hats/snares are the loudest onset machines in a mix and they live up
-// top — treble onset flux counts extra toward percussiveness
-let percTrebleWeight = 2.5;
-// baked-track boundary (offline units: envelopes normalized to song peak)
-let bakedPercLo = 0.05, bakedPercHi = 0.15;
-let LEAD_S = 0.14;   // pump wind-up starts this early; the kick lands ON the beat
-// drowsy eyelid script over p in 0..1: blink, mostly reopen, heavier
-// blink, barely reopen, closed for good (1 = open, 0 = closed)
-const DROWSY = [[0,1],[0.13,0.12],[0.24,0.78],[0.42,0.04],[0.53,0.30],[0.72,0],[1,0]];
-const SIL_DROWSY = 6000, SIL_ASLEEP = 10500;
-let pump = 0, x = 0, xT = 0, dy = 0, kick = 0;
-let loudEma = 0, lastBeat = 0;
-// sway machinery: continuous phase, soft-PLL'd to detected beats
-let grv = 1, phi = 0, T = 750, lastStrong = 0;
-let fluxEma = 0, bassPrev = 0, xSway = 0, swayEnv = 0, perc = 0;
-let trebPrev = 0, trebFluxEma = 0;
-let eyeO = 1, eyeTarget = 1, surp = 0;       // eyeO: 0 closed .. 1 open
+// media clock: player.currentTime is coarse/jittery — run our own and
+// only lean on it (snap on seeks / loops), minus the output latency
+const MC = {t: 0, ok: false};
+function mediaTime(dt) {
+  const ct = player.currentTime, pred = MC.t + dt*player.playbackRate;
+  MC.t = (!MC.ok || Math.abs(ct - pred) > 0.15) ? ct : pred + (ct - pred)*Math.min(1, 3*dt);
+  MC.ok = true;
+  return MC.t - (AC.outputLatency || 0) - (AC.baseLatency || 0);
+}
+function bakedFrame(t) {
+  const bt = baked.times, n = bt.length;
+  const k = clamp(bisect(bt, t) - 1, 0, n - 2);
+  const b = k + (t - bt[k])/(bt[k + 1] - bt[k]);   // extrapolates past both ends
+  const i = clamp(Math.floor(b), 0, n - 2), fr = clamp(b - i, 0, 1);
+  const li = clamp(Math.floor(t*baked.fr), 0, baked.loud.length - 1);
+  return {
+    b, bpm: 60/(bt[i + 1] - bt[i]),
+    energy: lerp(baked.energy[i], baked.energy[i + 1], fr),
+    groove: lerp(baked.groove[i], baked.groove[i + 1], fr),
+    conf: baked.conf,
+    sound: baked.loud[li] > CFG.bakedSilenceDb,
+    div: baked.div,
+    accent: baked.accent[clamp(Math.round(b), 0, n - 1)],
+  };
+}
+
+// ---------- features: pick a driver, keep b continuous ----------
+let lastF = {b: 0, bpm: 120, energy: 0, groove: 0, conf: 0, sound: false, div: 2, accent: 1};
+function features(t, dt) {
+  let f;
+  const fileIdle = srcKind === 'file' && (player.paused || player.ended);
+  if (srcKind === 'file' && baked && !fileIdle) f = bakedFrame(mediaTime(dt) + CFG.avOffset);
+  else if (srcKind && !fileIdle) f = liveFrame(t, dt);
+  else f = {...lastF, b: lastF.b + dt*lastF.bpm/60, energy: 0, conf: 0, sound: false};
+  // seeks, loops and driver hand-offs jump b: absorb the whole-beat part
+  // so the L l L R r R pattern carries on (springs eat the fraction)
+  const expect = M.b + dt*M.bpm/60;
+  let b = f.b + M.bOff;
+  if (Math.abs(b - expect) > 0.35) { M.bOff += Math.round(expect - b); b = f.b + M.bOff; }
+  M.b = b;
+  lastF = f;
+  return f;
+}
+
+// ---------- motion: beat clock -> targets -> springs ----------
+const SX = {p: 0, v: 0}, SY = {p: 0, v: 0}, SK = {p: 0, v: 0};
+const M = {b: 0, bOff: 0, bpm: 120, gate: 0, energy: 0, grv: 0, conf: 0, divMix: 1};
+const OMY = 40;     // nod smoother, critically damped: group delay = 2/OMY
+function spring(s, tgt, om, z, dt) {   // semi-implicit, <= 4 ms substeps
+  for (let r = dt; r > 1e-6; r -= 0.004) {
+    const h = Math.min(r, 0.004);
+    s.v += (om*om*(tgt - s.p) - 2*z*om*s.v)*h;
+    s.p += s.v*h;
+  }
+}
+function motion(f, dt, ts) {
+  M.bpm = approach(M.bpm, f.bpm, 0.8, dt);
+  M.gate = approach(M.gate, f.sound ? 1 : 0, f.sound ? 0.45 : 0.7, dt);
+  M.energy = approach(M.energy, f.energy, 0.5, dt);
+  M.grv = approach(M.grv, f.groove, 1.6, dt);
+  M.conf = approach(M.conf, f.conf, 0.8, dt);
+  M.divMix = approach(M.divMix, f.div === 2 ? 1 : 0, 1.0, dt);
+  const T = 60/M.bpm, z = CFG.zeta, b = M.b, gate = M.gate;
+  const om = Math.PI/(Math.sqrt(1 - z*z)*CFG.arrive*T);
+  const g = M.grv*M.conf;                 // no confident beat, no pumping
+  // pump: the target steps `arrive` beats early and the spring's time to
+  // peak is exactly that, so her swing *lands* on the beat, then settles
+  const pumpX = PUMP[mod(Math.floor(b + CFG.arrive), PUMP.length)]*mix(CFG.pumpAmp, M.energy);
+  // sway: extremes on beats, advanced by the spring's own phase lag at
+  // that frequency so the *output* peaks on the beat. half-time when fast
+  const sway = (d) => {
+    const ws = Math.PI/(d*T);
+    return Math.cos(Math.PI*b/d + Math.atan2(2*z*om*ws, om*om - ws*ws));
+  };
+  const swayX = mix(CFG.swayAmp, M.energy)*lerp(sway(1), sway(2), M.divMix);
+  const wob = 0.20*Math.sin(ts*0.83) + 0.12*Math.sin(ts*1.37 + 2);   // not a metronome
+  spring(SX, gate*(g*pumpX + (1 - g)*swayX + wob), om, z, dt);
+  // nod: quick drop onto the beat, lazier rise, a tiny lift before it
+  const by = b + (2/OMY)/T;               // pre-compensate the smoother's lag
+  const u = by - Math.round(by);
+  const nod = Math.exp(-Math.pow(u/(u < 0 ? 0.11 : 0.24), 2))
+            - 0.18*Math.exp(-Math.pow((u + 0.3)/0.1, 2));
+  // ballad: she sinks into each side of the sway
+  const dip = (d) => Math.pow(0.5 + 0.5*Math.cos(2*Math.PI*by/d), 1.5);
+  spring(SY, gate*(g*mix(CFG.nodDepth, M.energy)*f.accent*nod
+                 + (1 - g)*mix(CFG.swayDip, M.energy)*lerp(dip(1), dip(2), M.divMix)),
+         OMY, 1, dt);
+  spring(SK, 0, 17, 0.42, dt);             // startle hop
+}
+
+// ---------- the nap ----------
+let eyeO = 1, surp = 0;                   // eyeO: 0 closed .. 1 open
 let mode = 'awake', lastSound = performance.now(), startleT0 = 0, sleepF = 0;
 let th = [0,0,0,0], w = [0,0,0,0], xTickPrev = 0, prevV = 0;
 let angles = [0,0,0,0], anglesPrev = [0,0,0,0], acc = 0, lastT = performance.now();
-let beats = 0;
-window.__dbg = () => ({x, beats, eyeO, playing, mode, sleepF, surp,
-                       grv, perc, bpm: 60000/T, baked: !!baked,
-                       bkBpm: baked ? baked.bpm : 0,
-                       bkBeats: baked ? baked.beats.length : 0,
-                       t: player.currentTime});
-window.__bakedRaw = () => baked && {rawPerc: Array.from(baked.rawPerc),
-                                    bpm: baked.bpm, dur: baked.dur};
-window.__forceSleep = (ms) => { lastSound = performance.now() - (ms||20000); };
+window.__dbg = () => ({src: srcKind, mode, sleepF, eyeO, b: M.b, bpm: M.bpm,
+  gate: M.gate, energy: M.energy, groove: M.grv, conf: M.conf, x: SX.p, y: SY.p,
+  baked: !!baked, bakedBpm: baked ? baked.bpm : 0, bakedClar: baked ? baked.clar : 0,
+  bakedBeats: baked ? Array.from(baked.times) : null,
+  live: {bpm: 60/LV.T, conf: LV.conf, groove: LV.groove, db: LV.totDb},
+  t: player.currentTime});
+window.__forceSleep = (ms) => { lastSound = performance.now() - (ms || 20000); };
 
 function drowsyEye(p) {
   for (let i = 1; i < DROWSY.length; i++) {
@@ -512,8 +833,8 @@ function springTick(v) {   // the proven 12 Hz constants (vibing gain)
 
 function startle(now) {
   mode = 'startle'; startleT0 = now;
-  kick = -3.4;
-  for (const z of ZZZ) document.getElementById(z).style.opacity = 0;
+  SK.v -= 95;                              // a real hop, not a teleport
+  for (const zz of ZZZ) document.getElementById(zz).style.opacity = 0;
   // tuft flare: inward impulse, like a full-body flinch
   for (let j = 0; j < 4; j++) w[j] += (j < 2 ? -2.6 : 2.6)*TUFTS[j][3];
   statusEl.textContent = '!!';
@@ -521,59 +842,10 @@ function startle(now) {
 
 function loop(now) {
   if (window.__freeze) { requestAnimationFrame(loop); return; }   // test hook
-  const dt = Math.min(50, now - lastT); lastT = now;
-  const useBaked = !!(baked && srcNode === fileNode && playing && !player.paused);
-  let bass = 0, total = 0;
-  if (analyser && playing) {
-    analyser.getByteFrequencyData(freq);
-    for (let i = 1; i <= 6; i++) bass += freq[i];
-    bass /= 6;
-    for (let i = 0; i < 64; i++) total += freq[i];
-    total /= 64;
-    loudEma = loudEma*0.95 + total*0.05;
-    // onset: the RISE of bass energy this frame — kicks spike it even
-    // over a sustained bassline, which a level detector cannot see
-    const onset = Math.max(0, bass - bassPrev);
-    bassPrev = bass;
-    fluxEma = fluxEma*0.97 + onset*0.03;
-    // treble onset flux: bins ~1.9-9.4 kHz, where hats and snares snap
-    let treb = 0;
-    for (let i = 40; i <= 200; i++) treb += freq[i];
-    treb /= 161;
-    trebFluxEma = trebFluxEma*0.97 + Math.max(0, treb - trebPrev)*0.03;
-    trebPrev = treb;
-    // percussiveness for the sway blend: bass + weighted treble onsets
-    perc = (fluxEma + percTrebleWeight*trebFluxEma) / (loudEma + 6);
-    if (window.__logBeats)
-      console.log(`onset: ${onset.toFixed(1)}; fluxEma: ${fluxEma.toFixed(2)}; ` +
-        `trebFlux: ${trebFluxEma.toFixed(2)}; ` +
-        `thrs: ${(fluxEma*pumpThrsMult + pumpThrsAdd).toFixed(2)}; perc: ${perc.toFixed(3)}`);
-    // beat: onset pops above its own recent average (live sources only —
-    // a baked track drives the pump from its beat grid instead)
-    if (!useBaked && onset > fluxEma*pumpThrsMult + pumpThrsAdd && now - lastBeat > 180) {
-      lastBeat = now; beats++;
-      pump = (pump + 1) % PUMP.length;
-      const amp = 1.1 + Math.min(2.1, loudEma/26);
-      xT = PUMP[pump] * amp;
-      kick = Math.min(kick, -Math.min(2.4, 0.8 + onset/14));
-    }
-    // strong-beat detector (stricter) — feeds tempo estimate + sway PLL
-    if (!useBaked && onset > fluxEma*strongThrsMult + strongThrsAdd && now - lastStrong > 250) {
-      const ibi = now - lastStrong;
-      if (ibi > 300 && ibi < 1600) T = T*0.85 + ibi*0.15;
-      lastStrong = now;
-      // pull the sway so an extreme lands on this beat (soft PLL)
-      const tgt = Math.round((phi - Math.PI/2)/Math.PI)*Math.PI + Math.PI/2;
-      phi += (tgt - phi)*0.22;
-    }
-    // grooviness: percussive music pumps, sustained music sways
-    if (!useBaked) {
-      const gT = Math.min(1, Math.max(0, (perc - balladPercLo)/(balladPercHi - balladPercLo)));
-      grv += (gT - grv)*0.015;
-    }
-  }
-  const soundNow = playing && total > 6;
-  if (soundNow) lastSound = now;
+  const dtMs = Math.min(50, now - lastT); lastT = now;
+  const dt = dtMs/1000, ts = now/1000;
+  const f = features(ts, dt);
+  if (f.sound) lastSound = now;
   const sil = now - lastSound;
 
   // ---- mode machine ----
@@ -583,7 +855,7 @@ function loop(now) {
       statusEl.textContent = 'okay, okay — awake ♪';
     }
   } else if (mode === 'asleep') {
-    if (soundNow) startle(now);          // only true sleep earns the startle
+    if (f.sound) startle(now);             // only true sleep earns the startle
   } else {
     const prev = mode;
     mode = sil > SIL_ASLEEP ? 'asleep' : sil > SIL_DROWSY ? 'drowsy' : 'awake';
@@ -591,173 +863,148 @@ function loop(now) {
   }
 
   // ---- eyes ----
-  let ease = 0.10;
+  let eyeTarget = 1, tau = 0.16;
   if (mode === 'startle') {
     const st = now - startleT0;
-    surp += ((st < 620 ? 1 : 0) - surp) * 0.45;
-    eyeTarget = 0;                       // melt into groove-closed underneath
+    surp = approach(surp, st < 620 ? 1 : 0, 0.028, dt);
+    eyeTarget = 0;                         // melt into groove-closed underneath
     // rays flicker: on, off, on, gone
-    const g28 = document.getElementById('g28');
     const on = st < 130 || (st > 210 && st < 330);
-    g28.style.display = on ? '' : 'none';
+    document.getElementById('g28').style.display = on ? '' : 'none';
   } else {
-    surp += (0 - surp) * 0.45;
-    if (mode === 'asleep') { eyeTarget = 0; ease = 0.06; }
+    surp = approach(surp, 0, 0.028, dt);
+    if (mode === 'asleep') { eyeTarget = 0; tau = 0.27; }
     else if (mode === 'drowsy') {
       eyeTarget = drowsyEye((sil - SIL_DROWSY)/(SIL_ASLEEP - SIL_DROWSY));
-      ease = 0.25;                       // blinks need to land
-    } else eyeTarget = (playing && sil < 1800) ? 0 : 1;
+      tau = 0.058;                         // blinks need to land
+    } else eyeTarget = (srcKind && sil < 1800) ? 0 : 1;
   }
-  eyeO += (eyeTarget - eyeO) * ease;
+  eyeO = approach(eyeO, eyeTarget, tau, dt);
 
   // ---- sleep depth: slow to sink, quick to surface ----
   const sTgt = mode === 'asleep' ? 1 : 0;
-  sleepF += (sTgt - sleepF) * (sTgt ? 0.012 : 0.35);
+  sleepF = approach(sleepF, sTgt, sTgt ? 1.38 : 0.04, dt);
 
-  // ---- baked track: she has heard this song before ----
-  if (useBaked && soundNow) {
-    const t = player.currentTime;
-    if (Math.abs(t - bkPrevT) > 0.6) {       // seek / loop restart
-      bkBi = bisect(baked.beats, t); bkPend = [];
-    }
-    bkPrevT = t;
-    const li = Math.min(baked.loud.length-1, Math.max(0, Math.floor(t/baked.hopS)));
-    const gi = Math.min(baked.grv.length-1, Math.floor(t/baked.grvHop));
-    grv += (baked.grv[gi] - grv)*0.05;
-    // anticipation: wind-up starts LEAD_S before the beat...
-    while (bkBi < baked.beats.length && t >= baked.beats[bkBi] - LEAD_S) {
-      const amp = 1.1 + 2.1*Math.min(1, baked.loud[li]*1.6);
-      xT = PUMP[bkBi % PUMP.length] * amp;
-      bkPend.push(bkBi); bkBi++;
-    }
-    // ...and the impact lands ON it
-    while (bkPend.length && t >= baked.beats[bkPend[0]]) {
-      const s = baked.strength[bkPend.shift()];
-      kick = Math.min(kick, -Math.min(2.4, 0.7 + 0.6*s));
-      beats++;
-    }
-    // sway phase straight off the grid: extremes exactly on beats —
-    // half-time on fast grids, the way people actually sway to slow songs
-    const div = baked.bpm > 85 ? 2 : 1;
-    const k = Math.min(baked.beats.length-2, Math.max(0, bisect(baked.beats, t)-1));
-    const frac = Math.min(1, Math.max(0,
-      (t - baked.beats[k])/(baked.beats[k+1] - baked.beats[k] || 1)));
-    const ph = Math.PI*(k + frac)/div;
-    phi = ph + Math.PI/2;
-    const swayA = 1.6 + 1.6*Math.min(1, baked.loud[li]*1.6);
-    xSway = swayA*Math.cos(ph);
-  }
-
-  // ---- motion integration ----
-  if (soundNow) {
-    if (!useBaked) {
-      phi += dt*Math.PI/T;               // half cycle per beat: penlight sway
-      const swayA = 1.6 + Math.min(1.6, loudEma/30);
-      xSway = swayA*Math.sin(phi);
-    }
-    swayEnv += (1 - swayEnv)*0.05;
-  } else {
-    xT *= 0.92; xSway *= 0.92;           // both vocabularies drain in silence
-    swayEnv *= 0.92;
-  }
-  const xTarget = grv*xT + (1-grv)*xSway;
-  x += (xTarget - x) * 0.30;
-  kick *= 0.86;
-  const bobAwake = 0.30*Math.sin(now/380);
-  const bobSleep = 0.60*Math.sin(now/520) + 1.1;  // deep breath, settled down
-  // ballad: kicks soften, and she settles gently into each side of the sway
-  dy = bobAwake + (bobSleep - bobAwake)*sleepF + kick*(0.3 + 0.7*grv)
-     + (1-grv)*swayEnv*0.45*(0.5 - 0.5*Math.cos(2*phi));
+  // ---- body ----
+  motion(f, dt, ts);
+  const breathe = 0.30*Math.sin(ts/0.38)*(1 - 0.7*M.gate);
+  const sleepBob = 0.60*Math.sin(ts/0.52) + 1.1;   // deep breath, settled down
+  const dy = SY.p + lerp(breathe, sleepBob, sleepF) + SK.p;
   const lean = 2.0*sleepF;
   // tuft springs at the proven 12 Hz, lerped to display rate
-  acc += dt;
+  acc += dtMs;
   if (acc >= 83.3) {
     acc -= 83.3;
-    springTick(x - xTickPrev);
-    xTickPrev = x;
+    springTick(SX.p - xTickPrev);
+    xTickPrev = SX.p;
   }
-  const f = Math.min(1, acc/83.3);
-  const disp = angles.map((a,j)=>anglesPrev[j] + (a-anglesPrev[j])*f);
+  const fr = Math.min(1, acc/83.3);
+  const disp = angles.map((a,j)=>anglesPrev[j] + (a-anglesPrev[j])*fr);
   zzz(now, sleepF);
   boil(now);
-  render(x + lean, dy, eyeO, surp, disp);
+  render(SX.p + lean, dy, eyeO, surp, disp);
+  if (window.__trace) window.__trace.push({t: ts, b: M.b, x: SX.p, y: dy,
+    g: M.grv*M.conf, gate: M.gate, bpm: M.bpm});
   requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);
 
-// hidden test hooks: synthetic sources into the analyser (no speakers)
-function addHats(ms) {   // highpassed noise ticks — a fake hi-hat
-  const nb = AC.createBuffer(1, AC.sampleRate/2, AC.sampleRate);
-  const ch = nb.getChannelData(0);
+// ---------- hidden test hooks: synthetic sources (no speakers) ----------
+function testSrc(label, build) {
+  stopSource(); ensureAC();
+  build();
+  setOn(null, 'test', label);
+}
+function pulse(g, peak, decay, ms) {
+  testTimers.push(setInterval(() => {
+    const t = AC.currentTime;
+    g.gain.cancelScheduledValues(t);
+    g.gain.setValueAtTime(peak, t);
+    g.gain.exponentialRampToValueAtTime(peak*0.02, t + decay);
+  }, ms));
+}
+function tone(type, fq, gain) {            // osc -> gain -> analyser
+  const o = AC.createOscillator(); o.type = type; o.frequency.value = fq;
+  const g = AC.createGain(); g.gain.value = gain;
+  o.connect(g); g.connect(analyser); o.start(); testNodes.push(o);
+  return g;
+}
+function hats(ms) {                        // highpassed noise ticks — a fake hi-hat
+  const nb = AC.createBuffer(1, AC.sampleRate/2, AC.sampleRate), ch = nb.getChannelData(0);
   for (let i = 0; i < ch.length; i++) ch[i] = Math.random()*2 - 1;
   const ns = AC.createBufferSource(); ns.buffer = nb; ns.loop = true;
   const hp = AC.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 5000;
-  const hg = AC.createGain(); hg.gain.value = 0;
-  ns.connect(hp); hp.connect(hg); hg.connect(analyser); ns.start();
-  setInterval(() => {
-    const t = AC.currentTime;
-    hg.gain.cancelScheduledValues(t);
-    hg.gain.setValueAtTime(0.5, t);
-    hg.gain.exponentialRampToValueAtTime(0.01, t + 0.06);
-  }, ms);
-}
-window.__vibeTest = (ms) => {
-  ensureAC();
-  const osc = AC.createOscillator(); osc.type = 'sine'; osc.frequency.value = 70;
   const g = AC.createGain(); g.gain.value = 0;
-  osc.connect(g); g.connect(analyser);
-  osc.start();
-  setInterval(() => {
-    const t = AC.currentTime;
-    g.gain.cancelScheduledValues(t);
-    g.gain.setValueAtTime(0.9, t);
-    g.gain.exponentialRampToValueAtTime(0.02, t + 0.18);
-  }, ms || 430);
-  addHats((ms || 430)/2);
-  playing = true;
-  statusEl.textContent = 'test groove ♪';
-};
-window.__basslineTest = () => {
+  ns.connect(hp); hp.connect(g); g.connect(analyser); ns.start(); testNodes.push(ns);
+  pulse(g, 0.5, 0.06, ms);
+}
+window.__vibeTest = (ms = 430) => testSrc('test groove ♪', () => {
+  pulse(tone('sine', 70, 0), 0.9, 0.18, ms);
+  hats(ms/2);
+});
+window.__basslineTest = () => testSrc('test bassline ♪', () => {
   // the level-detector killer: sustained in-band bass + kicks on top
-  ensureAC();
-  const bed = AC.createOscillator(); bed.frequency.value = 80;
-  const bg2 = AC.createGain(); bg2.gain.value = 0.35;
-  bed.connect(bg2); bg2.connect(analyser); bed.start();
-  const osc = AC.createOscillator(); osc.frequency.value = 65;
-  const og = AC.createGain(); og.gain.value = 0;
-  osc.connect(og); og.connect(analyser); osc.start();
-  setInterval(() => {
-    const t = AC.currentTime;
-    og.gain.cancelScheduledValues(t);
-    og.gain.setValueAtTime(0.8, t);
-    og.gain.exponentialRampToValueAtTime(0.02, t + 0.15);
-  }, 500);
-  addHats(250);
-  playing = true;
-  statusEl.textContent = 'test bassline ♪';
-};
-window.__balladTest = () => {
-  ensureAC();
-  // sustained "strings": sawtooth pad with slow swells
-  const pad = AC.createOscillator(); pad.type = 'sawtooth'; pad.frequency.value = 220;
-  const pg = AC.createGain(); pg.gain.value = 0.25;
+  tone('sine', 80, 0.35);
+  pulse(tone('sine', 65, 0), 0.8, 0.15, 500);
+  hats(250);
+});
+window.__balladTest = () => testSrc('test ballad ♪', () => {
+  // sustained "strings" with slow swells + a soft ~72 bpm heartbeat
+  const pg = tone('sawtooth', 220, 0.25);
   const lfo = AC.createOscillator(); lfo.frequency.value = 0.15;
   const lg = AC.createGain(); lg.gain.value = 0.12;
-  lfo.connect(lg); lg.connect(pg.gain);
-  pad.connect(pg); pg.connect(analyser);
-  pad.start(); lfo.start();
-  // soft slow heartbeat at ~72 bpm for the sway to lock onto
-  const osc = AC.createOscillator(); osc.frequency.value = 60;
-  const og = AC.createGain(); og.gain.value = 0;
-  osc.connect(og); og.connect(analyser); osc.start();
-  setInterval(() => {
-    const t = AC.currentTime;
-    og.gain.cancelScheduledValues(t);
-    og.gain.setValueAtTime(0.30, t);
-    og.gain.exponentialRampToValueAtTime(0.01, t + 0.5);
-  }, 830);
-  playing = true;
-  statusEl.textContent = 'test ballad ♪';
+  lfo.connect(lg); lg.connect(pg.gain); lfo.start(); testNodes.push(lfo);
+  pulse(tone('sine', 60, 0), 0.30, 0.5, 830);
+});
+// a whole synthetic song through the real file path (decode -> bake -> play)
+function wavBlob(buf) {
+  const ch = buf.getChannelData(0), n = ch.length;
+  const dv = new DataView(new ArrayBuffer(44 + 2*n));
+  const W = (o, s) => { for (let i = 0; i < s.length; i++) dv.setUint8(o + i, s.charCodeAt(i)); };
+  W(0, 'RIFF'); dv.setUint32(4, 36 + 2*n, true); W(8, 'WAVE'); W(12, 'fmt ');
+  dv.setUint32(16, 16, true); dv.setUint16(20, 1, true); dv.setUint16(22, 1, true);
+  dv.setUint32(24, buf.sampleRate, true); dv.setUint32(28, 2*buf.sampleRate, true);
+  dv.setUint16(32, 2, true); dv.setUint16(34, 16, true);
+  W(36, 'data'); dv.setUint32(40, 2*n, true);
+  for (let i = 0; i < n; i++) dv.setInt16(44 + 2*i, clamp(ch[i], -1, 1)*32767, true);
+  return new Blob([dv], {type: 'audio/wav'});
+}
+window.__synthSong = async ({bpm = 124, secs = 40, ballad = false, jitter = 0,
+                              bakeOnly = false} = {}) => {
+  ensureAC();
+  const sr = 44100, oc = new OfflineAudioContext(1, sr*secs, sr), T = 60/bpm;
+  const nz = oc.createBuffer(1, sr, sr), ch = nz.getChannelData(0);
+  for (let i = 0; i < sr; i++) ch[i] = Math.random()*2 - 1;
+  const pad = oc.createOscillator(); pad.type = 'sawtooth'; pad.frequency.value = 220;
+  const pg = oc.createGain(); pg.gain.value = ballad ? 0.15 : 0.05;
+  pad.connect(pg); pg.connect(oc.destination); pad.start();
+  for (let t = 0.5; t < secs - 1; t += T) {
+    const at = t + (Math.random()*2 - 1)*jitter;
+    const o = oc.createOscillator(), g = oc.createGain();
+    if (ballad) {
+      o.frequency.value = 60;
+      g.gain.setValueAtTime(0, at);
+      g.gain.linearRampToValueAtTime(0.25, at + 0.04);
+      g.gain.exponentialRampToValueAtTime(0.001, at + 0.6);
+    } else {
+      o.frequency.setValueAtTime(130, at);
+      o.frequency.exponentialRampToValueAtTime(45, at + 0.12);
+      g.gain.setValueAtTime(0.9, at);
+      g.gain.exponentialRampToValueAtTime(0.001, at + 0.3);
+      const ha = at + T/2, hs = oc.createBufferSource(); hs.buffer = nz;
+      const hp = oc.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 7000;
+      const hg = oc.createGain();
+      hg.gain.setValueAtTime(0.3, ha);
+      hg.gain.exponentialRampToValueAtTime(0.001, ha + 0.05);
+      hs.connect(hp); hp.connect(hg); hg.connect(oc.destination);
+      hs.start(ha); hs.stop(ha + 0.06);
+    }
+    o.connect(g); g.connect(oc.destination); o.start(at); o.stop(at + 0.7);
+  }
+  const buf = await oc.startRendering();
+  if (bakeOnly) return bakeTrack(await wavBlob(buf).arrayBuffer());
+  return loadFile(new File([wavBlob(buf)], `synth-${bpm}${ballad ? '-ballad' : ''}.wav`,
+                           {type: 'audio/wav'}));
 };
 </script>
 </body>
