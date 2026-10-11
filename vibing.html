@@ -30,6 +30,19 @@
   button.on { background: var(--ink); color: var(--sand); }
   audio { width: 100%; height: 30px; margin-top: 10px; display: none; }
   .hint { font-size: .68rem; opacity: .5; margin: 2px 0 0; font-style: italic; }
+  .bands { display: flex; gap: 6px; justify-content: center; margin: 6px 0 8px; }
+  .band { width: 52px; display: flex; flex-direction: column; align-items: center; gap: 3px; }
+  .meter {
+    position: relative; width: 100%; height: 54px; overflow: hidden;
+    border: 1.5px solid var(--ink); border-radius: 6px; background: var(--paper);
+  }
+  .meter i {
+    position: absolute; left: 0; right: 0; bottom: 0; height: 100%;
+    transform-origin: bottom; transform: scaleY(0);
+  }
+  .meter .lvl { background: var(--ink); }
+  .meter .hit { background: var(--verm); opacity: 0; }
+  .band span { font-size: .6rem; line-height: 1.15; opacity: .6; font-style: italic; white-space: nowrap; }
 </style>
 </head>
 <body>
@@ -140,6 +153,7 @@
   </g>
 </svg>
 </div>
+  <div class="bands" id="bands"></div>
   <div class="status" id="status">pick a sound source &mdash; she's waiting</div>
   <div class="row">
     <button id="btnTab">&#128421; tab / screen audio</button>
@@ -207,7 +221,43 @@ const ZZZ = ['path41-1','path41','path41-4'];   // small -> large
   }
 })();
 
-function render(dx, dy, eyeO, surp, angles) {
+// tufts bend rather than swing stiff: each path is flattened to absolute
+// cubics once, then every frame its points rotate about the pivot by an
+// angle that grows root -> tip. s is each point's 0..1 reach along the tuft.
+function cubicPath(d) {          // M L C S (abs + rel) Z -> [x0,y0, 6 per cubic]
+  const tok = d.match(/[a-zA-Z]|-?(?:\d+\.?\d*|\.\d+)(?:e[-+]?\d+)?/g);
+  const out = [], num = () => +tok[i++];
+  let i = 0, cmd = '', x = 0, y = 0, qx = 0, qy = 0;
+  while (i < tok.length) {
+    if (/[a-zA-Z]/.test(tok[i])) cmd = tok[i++];
+    else if (/z/i.test(cmd)) throw new Error('numbers after Z');
+    const rel = cmd !== cmd.toUpperCase(), ox = rel ? x : 0, oy = rel ? y : 0;
+    let c;
+    switch (cmd.toUpperCase()) {
+      case 'M':
+        if (out.length) throw new Error('one subpath only');
+        x = ox + num(); y = oy + num(); qx = x; qy = y;
+        out.push(x, y); cmd = rel ? 'l' : 'L'; continue;
+      case 'L': { const nx = ox + num(), ny = oy + num(); c = [x, y, nx, ny, nx, ny]; break; }
+      case 'C': c = [ox + num(), oy + num(), ox + num(), oy + num(), ox + num(), oy + num()]; break;
+      case 'S': c = [2*x - qx, 2*y - qy, ox + num(), oy + num(), ox + num(), oy + num()]; break;
+      case 'Z': continue;
+      default: throw new Error('unsupported path command ' + cmd);
+    }
+    out.push(...c);
+    [qx, qy, x, y] = c.slice(2);
+  }
+  return out;
+}
+const TG = TUFTS.map(([id, cx, cy]) => {
+  const p = cubicPath(document.getElementById(id).getAttribute('d'));
+  const r = [];
+  for (let k = 0; k < p.length; k += 2) r.push(Math.hypot(p[k] - cx, p[k + 1] - cy));
+  const rMax = Math.max(...r);
+  return {el: document.getElementById(id), p, s: r.map(v => Math.pow(v/rMax, 1.5))};
+});
+
+function render(dx, dy, eyeO, surp) {
   const rot = (0.9*dx).toFixed(3);
   document.getElementById('g23').setAttribute('transform',
     `translate(${(11.449+0.55*dx).toFixed(3)} ${(6.862+dy).toFixed(3)})` +
@@ -230,9 +280,14 @@ function render(dx, dy, eyeO, surp, angles) {
     document.getElementById(pid).setAttribute('d',
       'M'+pts.map(p=>p[0].toFixed(2)+' '+p[1].toFixed(2)).join('L'));
   }
-  angles.forEach((a,j)=>{
-    const [id,cx,cy] = TUFTS[j];
-    document.getElementById(id).setAttribute('transform',`rotate(${a.toFixed(2)} ${cx} ${cy})`);
+  TG.forEach((g, j) => {
+    const [, cx, cy] = TUFTS[j], [root, bend] = tuftPose(j), q = [];
+    for (let k = 0; k < g.p.length; k += 2) {
+      const a = (root + bend*g.s[k >> 1])*Math.PI/180;
+      const ca = Math.cos(a), sa = Math.sin(a), ux = g.p[k] - cx, uy = g.p[k + 1] - cy;
+      q.push((cx + ux*ca - uy*sa).toFixed(3), (cy + ux*sa + uy*ca).toFixed(3));
+    }
+    g.el.setAttribute('d', `M${q[0]} ${q[1]}C${q.slice(2).join(' ')}`);
   });
 }
 
@@ -301,6 +356,38 @@ function bisect(a, t) {
   let lo = 0, hi = a.length;
   while (lo < hi) { const m = (lo + hi) >> 1; if (a[m] < t) lo = m + 1; else hi = m; }
   return lo;
+}
+
+// ---------- band meters: what each ear hears, per band ----------
+// Whichever driver is running writes raw readings here each frame: lvl is
+// the band's dB placed between its floor and its peak (0..1), on is its own
+// positive dB step (unweighted flux). meters() smooths and draws them.
+const BANDS = {lvl: new Float32Array(CFG.bands.length), on: new Float32Array(CFG.bands.length),
+               li: -1, shownL: new Float32Array(CFG.bands.length),
+               shownH: new Float32Array(CFG.bands.length), els: []};
+(function buildMeters() {
+  const names = ['sub', 'low', 'mid', 'high', 'air'];
+  const hz = (v) => v >= 1000 ? `${v/1000}k` : `${v}`;
+  const root = document.getElementById('bands');
+  CFG.bands.forEach(([lo, hi], i) => {
+    const b = document.createElement('div');
+    b.className = 'band';
+    b.innerHTML = `<div class="meter"><i class="lvl"></i><i class="hit"></i></div>` +
+                  `<span>${names[i] || 'band ' + i}<br>${hz(lo)}–${hz(hi)}</span>`;
+    root.appendChild(b);
+    BANDS.els.push({lvl: b.querySelector('.lvl'), hit: b.querySelector('.hit')});
+  });
+})();
+function meters(dt) {
+  for (let i = 0; i < BANDS.els.length; i++) {
+    const L = BANDS.lvl[i], h = sstep(0.5, 6, BANDS.on[i]);
+    BANDS.shownL[i] = L > BANDS.shownL[i] ? L : approach(BANDS.shownL[i], L, 0.12, dt);
+    BANDS.shownH[i] = Math.max(h, approach(BANDS.shownH[i], 0, 0.14, dt));
+    const s = `scaleY(${BANDS.shownL[i].toFixed(3)})`;
+    BANDS.els[i].lvl.style.transform = s;
+    BANDS.els[i].hit.style.transform = s;
+    BANDS.els[i].hit.style.opacity = BANDS.shownH[i].toFixed(3);
+  }
 }
 
 // ---------- audio plumbing ----------
@@ -444,17 +531,20 @@ function liveFrame(t, dt) {
   LV.sound = LV.totDb > CFG.liveSilenceDb;
   // onset strength: positive dB steps per band, floored under a slow peak
   if (!LV.peakDb) LV.peakDb = db.slice();
+  const per60 = clamp(1/(60*Math.max(dt, 1e-3)), 0.25, 4);   // any refresh rate
   let o = 0;
   for (let i = 0; i < nb; i++) {
     LV.peakDb[i] = Math.max(db[i], LV.peakDb[i] - 1.5*dt);
     const fl = Math.max(LV.peakDb[i] - CFG.floorDb, -110);
+    BANDS.lvl[i] = clamp((db[i] - fl)/CFG.floorDb, 0, 1);
+    BANDS.on[i] = 0;
     if (LV.prevDb) {
       const a = Math.max(db[i], fl), p = Math.max(LV.prevDb[i], fl);
-      if (a > p) o += CFG.bandW[i]*(a - p);
+      if (a > p) { o += CFG.bandW[i]*(a - p); BANDS.on[i] = (a - p)*per60; }
     }
   }
   LV.prevDb = db;
-  o *= clamp(1/(60*Math.max(dt, 1e-3)), 0.25, 4);    // per 60th, any refresh rate
+  o *= per60;
   // resample onto the fixed grid
   if (LV.gT < 0 || t - LV.gT > 0.5) {               // first frame / tab was hidden
     LV.gT = t; LV.lastT = t; LV.lastO = o; LV.filled = 0;
@@ -696,7 +786,7 @@ async function bakeTrack(ab) {
     groove[i] = sstep(CFG.grooveBaked[0], CFG.grooveBaked[1], p/pc)*slow;
     accent[i] = clamp(0.75 + 0.25*str[i]/med, 0.7, 1.35);
   }
-  return {times, bpm, energy, groove, accent, loud, fr: FR, clar,
+  return {times, bpm, energy, groove, accent, loud, fr: FR, clar, bandDb: dB, floors,
           conf: sstep(0.04, 0.2, clar),
           div: bpm > (CFG.halfTime[0] + CFG.halfTime[1])/2 ? 2 : 1,
           dur: src.duration};
@@ -717,6 +807,18 @@ function bakedFrame(t) {
   const b = k + (t - bt[k])/(bt[k + 1] - bt[k]);   // extrapolates past both ends
   const i = clamp(Math.floor(b), 0, n - 2), fr = clamp(b - i, 0, 1);
   const li = clamp(Math.floor(t*baked.fr), 0, baked.loud.length - 1);
+  // meters: the bake runs ~86 frames/s, faster than the display — take the
+  // biggest step since the last drawn frame so short hits aren't skipped
+  const j0 = (li > BANDS.li && li - BANDS.li < 8) ? BANDS.li + 1 : li;
+  baked.bandDb.forEach((e, i) => {
+    const fl = baked.floors[i];
+    let on = 0;
+    for (let j = Math.max(1, j0); j <= li; j++)
+      on = Math.max(on, Math.max(e[j], fl) - Math.max(e[j - 1], fl));
+    BANDS.lvl[i] = clamp((e[li] - fl)/CFG.floorDb, 0, 1);
+    BANDS.on[i] = on;
+  });
+  BANDS.li = li;
   return {
     b, bpm: 60/(bt[i + 1] - bt[i]),
     energy: lerp(baked.energy[i], baked.energy[i + 1], fr),
@@ -735,7 +837,10 @@ function features(t, dt) {
   const fileIdle = srcKind === 'file' && (player.paused || player.ended);
   if (srcKind === 'file' && baked && !fileIdle) f = bakedFrame(mediaTime(dt) + CFG.avOffset);
   else if (srcKind && !fileIdle) f = liveFrame(t, dt);
-  else f = {...lastF, b: lastF.b + dt*lastF.bpm/60, energy: 0, conf: 0, sound: false};
+  else {
+    f = {...lastF, b: lastF.b + dt*lastF.bpm/60, energy: 0, conf: 0, sound: false};
+    BANDS.lvl.fill(0); BANDS.on.fill(0);
+  }
   // seeks, loops and driver hand-offs jump b: absorb the whole-beat part
   // so the L l L R r R pattern carries on (springs eat the fraction)
   const expect = M.b + dt*M.bpm/60;
@@ -795,8 +900,7 @@ function motion(f, dt, ts) {
 // ---------- the nap ----------
 let eyeO = 1, surp = 0;                   // eyeO: 0 closed .. 1 open
 let mode = 'awake', lastSound = performance.now(), startleT0 = 0, sleepF = 0;
-let th = [0,0,0,0], w = [0,0,0,0], xTickPrev = 0, prevV = 0;
-let angles = [0,0,0,0], anglesPrev = [0,0,0,0], acc = 0, lastT = performance.now();
+let lastT = performance.now();
 window.__dbg = () => ({src: srcKind, mode, sleepF, eyeO, b: M.b, bpm: M.bpm,
   gate: M.gate, energy: M.energy, groove: M.grv, conf: M.conf, x: SX.p, y: SY.p,
   baked: !!baked, bakedBpm: baked ? baked.bpm : 0, bakedClar: baked ? baked.clar : 0,
@@ -815,20 +919,44 @@ function drowsyEye(p) {
   return 0;
 }
 
-function springTick(v) {   // the proven 12 Hz constants (vibing gain)
-  const gain = 1.6, k = 0.25, c = 0.30, capIn = 10, capOut = 2.6;
-  anglesPrev = angles.slice();
-  for (let j = 0; j < 4; j++) {
-    const mult = TUFTS[j][3], side = j < 2 ? 1 : -1;
-    w[j] += -gain*mult*prevV - k*th[j] - c*w[j];
-    th[j] += w[j];
-    const lo = side > 0 ? -capIn : -capOut, hi = side > 0 ? capOut : capIn;
-    const cl = Math.max(lo, Math.min(hi, th[j]));
-    if (cl !== th[j]) w[j] = 0;
-    th[j] = cl;
-  }
-  prevV = v;
-  angles = th.slice();
+// ---------- hair tufts: root spring + trailing tip, rubbery stops ----------
+// The root is the proven 12 Hz tick spring (gain 1.6, k .25, c .3 per tick)
+// moved to continuous time with matched poles, so it swings the same but
+// without the 83 ms velocity kinks the linear in-betweens used to add.
+// The tip hangs off the root and trails its accelerations, which is what
+// makes the tuft bend. The stops are now stiff, damped springs (they used
+// to zero the velocity) and the drawn angle eases into a ceiling just past
+// them, so the buried root can't swing out far enough to open a gap.
+const TF = {
+  om: 6.63, z: 0.32,               // matched to the 12 Hz tick spring
+  drive: 1.6/12/0.25,              // deg of lean per unit/s of head speed
+  capIn: 10, capOut: 2.6,          // deg, as before
+  stopOm: 45, stopZ: 0.6, give: 1.2,   // contact spring; deg drawn past a cap at most
+  tipOm: 11, tipZ: 0.25,           // tip vs root: quicker and whippier
+  tipFollow: 0.9, tipMax: 9,       // how hard the tip trails; deg of bend at most
+};
+const TS = TUFTS.map(() => ({p: 0, v: 0, bp: 0, bv: 0}));   // root deg, deg/s; bend
+const tuftCaps = (j) => j < 2 ? [-TF.capIn, TF.capOut] : [-TF.capOut, TF.capIn];
+function tufts(dt, headV) {
+  const om2 = TF.om*TF.om, so = TF.stopOm, to = TF.tipOm;
+  TS.forEach((s, j) => {
+    const m = TUFTS[j][3], [lo, hi] = tuftCaps(j);
+    for (let r = dt; r > 1e-6; r -= 0.004) {   // <= 4 ms substeps, like spring()
+      const h = Math.min(r, 0.004);
+      let a = -om2*(s.p + TF.drive*m*headV) - 2*TF.z*TF.om*s.v;
+      const over = s.p > hi ? s.p - hi : s.p < lo ? s.p - lo : 0;
+      if (over) a += -so*so*over - 2*TF.stopZ*so*s.v;
+      const ba = -to*to*s.bp - 2*TF.tipZ*to*s.bv - TF.tipFollow*a;
+      s.v += a*h; s.p += s.v*h;
+      s.bv += ba*h; s.bp += s.bv*h;
+    }
+  });
+}
+function tuftPose(j) {             // -> [root deg, bend deg] as drawn
+  const s = TS[j], [lo, hi] = tuftCaps(j), k = TF.give;
+  const root = s.p > hi ? hi + k*Math.tanh((s.p - hi)/k)
+             : s.p < lo ? lo + k*Math.tanh((s.p - lo)/k) : s.p;
+  return [root, TF.tipMax*Math.tanh(s.bp/TF.tipMax)];
 }
 
 function startle(now) {
@@ -836,7 +964,8 @@ function startle(now) {
   SK.v -= 95;                              // a real hop, not a teleport
   for (const zz of ZZZ) document.getElementById(zz).style.opacity = 0;
   // tuft flare: inward impulse, like a full-body flinch
-  for (let j = 0; j < 4; j++) w[j] += (j < 2 ? -2.6 : 2.6)*TUFTS[j][3];
+  // (2.6 deg per 12 Hz tick, as before)
+  TS.forEach((s, j) => { s.v += (j < 2 ? -2.6 : 2.6)*12*TUFTS[j][3]; });
   statusEl.textContent = '!!';
 }
 
@@ -891,18 +1020,11 @@ function loop(now) {
   const sleepBob = 0.60*Math.sin(ts/0.52) + 1.1;   // deep breath, settled down
   const dy = SY.p + lerp(breathe, sleepBob, sleepF) + SK.p;
   const lean = 2.0*sleepF;
-  // tuft springs at the proven 12 Hz, lerped to display rate
-  acc += dtMs;
-  if (acc >= 83.3) {
-    acc -= 83.3;
-    springTick(SX.p - xTickPrev);
-    xTickPrev = SX.p;
-  }
-  const fr = Math.min(1, acc/83.3);
-  const disp = angles.map((a,j)=>anglesPrev[j] + (a-anglesPrev[j])*fr);
+  tufts(dt, SX.v);
   zzz(now, sleepF);
   boil(now);
-  render(SX.p + lean, dy, eyeO, surp, disp);
+  meters(dt);
+  render(SX.p + lean, dy, eyeO, surp);
   if (window.__trace) window.__trace.push({t: ts, b: M.b, x: SX.p, y: dy,
     g: M.grv*M.conf, gate: M.gate, bpm: M.bpm});
   requestAnimationFrame(loop);
