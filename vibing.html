@@ -329,6 +329,7 @@ const CFG = {
   halfTime: [88, 96],      // sway on every other beat above this (hysteresis)
   grooveBaked: [5, 15],    // on-beat onset strength (weighted dB) -> 0..1 pump
   grooveLive:  [4, 12],
+  lofiGroove: 0.85,        // lo-fi skips the slowBpm ramp: she nods whatever the tempo
   liveSilenceDb: -70,      // analyser band-sum under this = silence
   bakedSilenceDb: -45,     // re. song peak
   avOffset: 0.03,          // s, draw slightly ahead of the audio
@@ -682,7 +683,7 @@ function startLofi() {
       const b = (heard + CFG.avOffset - t0)/spb, drumsIn = b >= 4*LOFI_INTRO;
       return {
         b, bpm, conf: 1,
-        groove: drumsIn ? sstep(CFG.slowBpm[0], CFG.slowBpm[1], bpm) : 0,
+        groove: drumsIn ? CFG.lofiGroove : 0,
         div: bpm > (CFG.halfTime[0] + CFG.halfTime[1])/2 ? 2 : 1,
         accent: drumsIn ? ACCENT[mod(Math.round(b), 4)] : 1,
       };
