@@ -159,6 +159,7 @@
     <button id="btnTab">&#128421; tab / screen audio</button>
     <button id="btnFile">&#127925; play a file</button>
     <button id="btnMic">&#127908; microphone</button>
+    <button id="btnLofi">&#127911; lo-fi</button>
     <button id="btnBoil">&#12336; line boil</button>
   </div>
   <audio id="player" controls loop></audio>
@@ -417,10 +418,11 @@ function stopSource() {
   testNodes.forEach(n => { try { n.stop(); } catch (e) {} });
   testTimers.forEach(clearInterval);
   testNodes = []; testTimers = [];
+  if (lofi) { lofi.stop(); lofi = null; }
   player.pause(); player.style.display = 'none';
   srcKind = null; baked = null; bakeToken++;
   liveReset();
-  for (const b of ['btnTab', 'btnFile', 'btnMic'])
+  for (const b of ['btnTab', 'btnFile', 'btnMic', 'btnLofi'])
     document.getElementById(b).classList.remove('on');
 }
 function setOn(id, kind, msg) {
@@ -482,6 +484,218 @@ document.getElementById('btnMic').onclick = async () => {
     setOn('btnMic', 'mic', 'listening ♪ (monitor source = whole system)');
   } catch (e) { statusEl.textContent = 'mic denied'; }
 };
+document.getElementById('btnLofi').onclick = () => {   // again = a new tune
+  stopSource(); ensureAC();
+  lofi = startLofi();
+  setOn('btnLofi', 'lofi', `lo-fi beats to nap to ♪ ${lofi.bpm} bpm · ${lofi.name}`);
+};
+
+// ---------- lo-fi generator: a beat she can't help but nod to ----------
+// All synthesized, scheduled ahead on the audio clock (25 ms timer, 150 ms
+// lookahead), then sent through "tape": wow & flutter, soft saturation, a
+// dull top end, plus vinyl crackle. It knows exactly where its beats are,
+// so it hands her the clock directly; the live ears still supply loudness,
+// silence and the band meters.
+let lofi = null;
+const mtof = (m) => 440*Math.pow(2, (m - 69)/12);
+const PC = ['C', 'D♭', 'D', 'E♭', 'E', 'F', 'G♭', 'G', 'A♭', 'A', 'B♭', 'B'];
+const LOFI_PROGS = [       // one chord per bar: [bass, quality, voicing] (MIDI)
+  [[38, 'm9', [53, 57, 60, 64]], [43, '13', [53, 59, 64]],             // ii V I vi
+   [36, 'maj9', [52, 55, 59, 62]], [45, 'm9', [55, 60, 64, 71]]],
+  [[41, 'maj9', [52, 57, 60, 67]], [40, 'm7', [50, 55, 59, 62]],       // IV iii ii I
+   [38, 'm9', [53, 57, 60, 64]], [36, 'maj7', [52, 55, 59, 64]]],
+  [[37, 'maj9', [53, 56, 60, 63]], [36, '7♯9', [52, 58, 63]],          // the two of us
+   [41, 'm9', [51, 56, 60, 67]], [41, 'm9', [51, 56, 60, 67]]],
+];
+const LOFI_INTRO = 2;      // bars of keys alone before the drums come in
+
+function startLofi() {
+  const rnd = Math.random, pick = (a) => a[Math.floor(rnd()*a.length)];
+  const hum = () => (rnd() - 0.5)*0.012;
+  const bpm = 80 + Math.floor(rnd()*11), spb = 60/bpm, swing = (0.05 + 0.03*rnd())*spb;
+  const tr = Math.floor(rnd()*7) - 3;
+  const prog = pick(LOFI_PROGS).map(([b, q, v]) => ({bass: b + tr, q, v: v.map(n => n + tr)}));
+  const keep = [], sr = AC.sampleRate;
+  const osc = (type, fq, run) => {
+    const o = AC.createOscillator(); o.type = type; o.frequency.value = fq;
+    if (run) { o.start(); keep.push(o); }
+    return o;
+  };
+  const gain = (v) => { const g = AC.createGain(); g.gain.value = v; return g; };
+  const filt = (type, fq, q = 0.7) => {
+    const f = AC.createBiquadFilter(); f.type = type; f.frequency.value = fq; f.Q.value = q; return f;
+  };
+  const chain = (...ns) => { for (let i = 1; i < ns.length; i++) ns[i - 1].connect(ns[i]); return ns[0]; };
+
+  // tape: wow/flutter (a wobbling delay) -> saturation -> dull top -> out
+  const master = gain(0.75);
+  master.connect(analyser); master.connect(AC.destination);
+  const wow = AC.createDelay(0.05); wow.delayTime.value = 0.012;
+  for (const [hz, depth] of [[0.33, 0.0018], [6.3, 0.00006]])
+    chain(osc('sine', hz, true), gain(depth), wow.delayTime);
+  const sat = AC.createWaveShaper(), curve = new Float32Array(1024);
+  for (let i = 0; i < 1024; i++) curve[i] = Math.tanh(1.8*(i/511.5 - 1))/Math.tanh(1.8);
+  sat.curve = curve; sat.oversample = '2x';
+  const tape = gain(0.55);                 // drive: warm, not squashed
+  chain(tape, wow, sat, filt('lowpass', 4200, 0.4), filt('highpass', 35), master);
+  // keys (tremolo rides the bus gain), lead (+ dotted-8th echo), drums
+  const keysLp = filt('lowpass', 2400);
+  keysLp.connect(tape);
+  const keys = gain(0.85);
+  chain(osc('sine', 4.2, true), gain(0.12), keys.gain);
+  keys.connect(keysLp);
+  const echo = AC.createDelay(2); echo.delayTime.value = 0.75*spb;
+  const echoLp = filt('lowpass', 1800);
+  chain(echo, echoLp, gain(0.32), echo);
+  echoLp.connect(tape);
+  const lead = gain(1);
+  lead.connect(keysLp); lead.connect(echo);
+  const drums = gain(1);
+  drums.connect(tape);
+  // noise for the kit; crackle = faint hiss + scattered dusty clicks, looped
+  const noise = AC.createBuffer(1, sr, sr);
+  noise.getChannelData(0).forEach((_, i, d) => { d[i] = rnd()*2 - 1; });
+  const dust = AC.createBuffer(1, 4*sr, sr), dd = dust.getChannelData(0);
+  for (let i = 0; i < dd.length; i++) dd[i] = (rnd()*2 - 1)*0.004;
+  for (let c = 0; c < 26; c++) {
+    const at = Math.floor(rnd()*(dd.length - 64)), len = 4 + Math.floor(rnd()*30);
+    const a = Math.pow(rnd(), 3)*0.25;
+    for (let k = 0; k < len; k++) dd[at + k] += a*Math.exp(-4*k/len)*(rnd()*2 - 1);
+  }
+  const crackle = AC.createBufferSource(); crackle.buffer = dust; crackle.loop = true;
+  chain(crackle, filt('highpass', 400), master);
+  crackle.start(); keep.push(crackle);
+  const hit = (t, offs, dur) => {          // a slice of the noise buffer
+    const s = AC.createBufferSource(); s.buffer = noise;
+    s.start(t, offs*rnd()); s.stop(t + dur);
+    return s;
+  };
+
+  // ---- voices ----
+  function epiano(m, t, vel, dur) {        // 1:1 FM, the tine's bark fades fast
+    const f = mtof(m), c = osc('sine', f), mo = osc('sine', f), mg = gain(0), a = gain(0);
+    mg.gain.setValueAtTime(f*2.2*vel, t);
+    mg.gain.exponentialRampToValueAtTime(f*0.25, t + 0.6);
+    a.gain.setValueAtTime(0, t);
+    a.gain.linearRampToValueAtTime(0.16*vel, t + 0.008);
+    a.gain.exponentialRampToValueAtTime(0.05*vel, t + Math.min(0.9, dur));
+    a.gain.setTargetAtTime(0, t + dur, 0.12);
+    chain(mo, mg, c.frequency); chain(c, a, keys);
+    c.start(t); mo.start(t); c.stop(t + dur + 0.6); mo.stop(t + dur + 0.6);
+  }
+  function pluck(m, t, vel, dur) {
+    const o = osc('triangle', mtof(m)), a = gain(0);
+    a.gain.setValueAtTime(0, t);
+    a.gain.linearRampToValueAtTime(0.11*vel, t + 0.012);
+    a.gain.exponentialRampToValueAtTime(0.03*vel, t + dur);
+    a.gain.setTargetAtTime(0, t + dur, 0.08);
+    chain(o, a, lead);
+    o.start(t); o.stop(t + dur + 0.5);
+  }
+  function bass(m, t, dur) {
+    const a = gain(0), lp = filt('lowpass', 420);
+    a.gain.setValueAtTime(0, t);
+    a.gain.linearRampToValueAtTime(0.42, t + 0.012);
+    a.gain.exponentialRampToValueAtTime(0.22, t + dur);
+    a.gain.setTargetAtTime(0, t + dur, 0.05);
+    chain(lp, a, tape);
+    for (const type of ['sine', 'triangle']) {
+      const o = osc(type, mtof(m)); o.connect(lp); o.start(t); o.stop(t + dur + 0.4);
+    }
+  }
+  function kick(t, v) {
+    const o = osc('sine', 115), a = gain(0);
+    o.frequency.setValueAtTime(115, t);
+    o.frequency.exponentialRampToValueAtTime(42, t + 0.09);
+    a.gain.setValueAtTime(0.9*v, t);
+    a.gain.exponentialRampToValueAtTime(0.001, t + 0.4);
+    chain(o, a, drums); o.start(t); o.stop(t + 0.42);
+  }
+  function snare(t, v) {
+    const a = gain(0), b = gain(0), body = osc('triangle', 185);
+    a.gain.setValueAtTime(0.45*v, t); a.gain.exponentialRampToValueAtTime(0.001, t + 0.2);
+    b.gain.setValueAtTime(0.25*v, t); b.gain.exponentialRampToValueAtTime(0.001, t + 0.09);
+    chain(hit(t, 0.5, 0.22), filt('bandpass', 1900, 0.7), a, drums);
+    chain(body, b, drums); body.start(t); body.stop(t + 0.1);
+  }
+  function hat(t, v, open) {
+    const len = open ? 0.28 : 0.045, a = gain(0);
+    a.gain.setValueAtTime(0.16*v, t); a.gain.exponentialRampToValueAtTime(0.001, t + len);
+    chain(hit(t, 0.5, len + 0.02), filt('highpass', 7500), a, drums);
+  }
+
+  // ---- the tune ----
+  // a melody from chord tones, mostly stepwise, kept for 8 bars so it
+  // repeats like a hook before the next one
+  function motif() {
+    let last = prog[0].v[prog[0].v.length - 1] + 12;
+    const odds = [0.6, 0.15, 0.35, 0.3, 0.45, 0.15, 0.3, 0.1];   // per 8th slot
+    return prog.map(c => {
+      const pool = [...c.v.map(n => n + 12), c.v[0] + 24];
+      return odds.map(p => {
+        if (rnd() > p) return 0;
+        pool.sort((a, b) => Math.abs(a - last) - Math.abs(b - last));
+        return last = pool[Math.floor(rnd()*3)];
+      });
+    });
+  }
+  const G = {n: 0, next: AC.currentTime + 0.1, motif: null, kVar: -1, reHit: false};
+  const t0 = G.next;
+  function play(n, t) {                    // one 16th step
+    const bar = Math.floor(n/16), s = n % 16, ch = prog[bar % 4], nxt = prog[(bar + 1) % 4];
+    const tt = t + (s % 4 === 2 ? swing : 0);            // swung off-beat 8ths
+    if (s === 0) {
+      ch.v.forEach((m, i) => epiano(m, t + 0.018*i + 0.008*rnd(), 0.75 + 0.15*rnd(), 3.9*spb));
+      G.kVar = rnd() < 0.4 ? pick([3, 7, 11]) : -1;
+      G.reHit = rnd() < 0.35;
+      if (bar % 8 === 0) G.motif = motif();
+    }
+    if (s === 6 && G.reHit) ch.v.forEach((m, i) => epiano(m, tt + 0.012*i, 0.4, 1.5*spb));
+    if (bar >= LOFI_INTRO) {
+      if (s === 0 || s === 10 || s === G.kVar) kick(tt, s === 0 ? 1 : 0.8);
+      if (s === 4 || s === 12) snare(tt + 0.014 + hum(), 0.9 + 0.1*rnd());   // laid back
+      if (s === 15 && rnd() < 0.25) snare(t + hum(), 0.18);                 // ghost
+      if (s % 2 === 0)
+        hat(tt + hum(), (s % 4 === 0 ? 0.55 : 0.32)*(0.8 + 0.4*rnd()), s === 14 && rnd() < 0.2);
+      if (s === 0) bass(ch.bass, t, 1.6*spb);
+      if (s === 10 && rnd() < 0.7) bass(ch.bass + (rnd() < 0.3 ? 12 : 0), tt, 0.45*spb);
+      if (s === 14 && rnd() < 0.35) bass(nxt.bass - 1, tt, 0.22*spb);       // walk-up
+    }
+    if (bar >= LOFI_INTRO + 2 && s % 2 === 0) {
+      const m = G.motif[bar % 4][s/2];
+      if (m) pluck(m, tt + hum(), 0.6 + 0.3*rnd(), 0.9*spb);
+    }
+  }
+  const tick = () => {
+    while (G.next < AC.currentTime + 0.15) { play(G.n++, G.next); G.next += spb/4; }
+  };
+  tick();
+  const timer = setInterval(tick, 25);
+  const ACCENT = [1.2, 0.9, 1.1, 0.9];
+  return {
+    bpm, name: prog.map(c => PC[mod(c.bass, 12)] + c.q).join(' → '),
+    frame() {                              // the beat as it leaves the speakers
+      const ot = AC.getOutputTimestamp && AC.getOutputTimestamp();
+      const heard = ot && ot.contextTime > 0
+        ? ot.contextTime + (performance.now() - ot.performanceTime)/1000
+        : AC.currentTime - (AC.outputLatency || 0) - (AC.baseLatency || 0);
+      const b = (heard + CFG.avOffset - t0)/spb, drumsIn = b >= 4*LOFI_INTRO;
+      return {
+        b, bpm, conf: 1,
+        groove: drumsIn ? sstep(CFG.slowBpm[0], CFG.slowBpm[1], bpm) : 0,
+        div: bpm > (CFG.halfTime[0] + CFG.halfTime[1])/2 ? 2 : 1,
+        accent: drumsIn ? ACCENT[mod(Math.round(b), 4)] : 1,
+      };
+    },
+    stop() {
+      clearInterval(timer);
+      const t = AC.currentTime;
+      master.gain.setTargetAtTime(0, t, 0.03);
+      keep.forEach(n => n.stop(t + 0.2));
+      setTimeout(() => master.disconnect(), 250);
+    },
+  };
+}
 
 // ---------- line boil: stepped re-seeding, held on threes ----------
 let boilOn = false, boilPhase = -1;
@@ -638,7 +852,7 @@ function liveEstimate(t) {
     2.0, 0.1);
   if (LV.div === 1 && bpm > CFG.halfTime[1]) LV.div = 2;
   else if (LV.div === 2 && bpm < CFG.halfTime[0]) LV.div = 1;
-  if (!LV.announced && LV.conf > 0.5 && srcKind !== 'file') {
+  if (!LV.announced && LV.conf > 0.5 && srcKind !== 'file' && srcKind !== 'lofi') {
     LV.announced = true;
     statusEl.textContent += ` ~${bpm.toFixed(0)} bpm`;
   }
@@ -836,6 +1050,7 @@ function features(t, dt) {
   let f;
   const fileIdle = srcKind === 'file' && (player.paused || player.ended);
   if (srcKind === 'file' && baked && !fileIdle) f = bakedFrame(mediaTime(dt) + CFG.avOffset);
+  else if (srcKind === 'lofi') f = {...liveFrame(t, dt), ...lofi.frame()};
   else if (srcKind && !fileIdle) f = liveFrame(t, dt);
   else {
     f = {...lastF, b: lastF.b + dt*lastF.bpm/60, energy: 0, conf: 0, sound: false};
